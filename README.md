@@ -14,7 +14,7 @@
 [![python](https://img.shields.io/badge/python-3.11%20→%203.14-3776AB?logo=python&logoColor=white&labelColor=1f2328)](pyproject.toml)
 [![stage](https://img.shields.io/badge/stage-1%20of%203-8250df?labelColor=1f2328)](#where-this-sits)
 
-**A face never becomes a vector without consent.**<br/>
+**Team OneReign** · **A face never becomes a vector without consent.**<br/>
 Withdraw that consent and every past commitment becomes unverifiable — including one already written to an immutable chain.
 
 </div>
@@ -302,19 +302,15 @@ Ten honest constraints live in **[LIMITATIONS.md](LIMITATIONS.md)**, including n
 ---
 
 <div align="center">
-<sub>
 
-Built for the unedited take. Every command is a Makefile target so nothing is typed live,<br/>
-and every stage prints its evidence so the viewer never has to take your word for anything.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/footer-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="assets/footer-light.svg">
+  <img alt="OneReign — Allen (@asta-maxx), Anbi (@Anbi105), Harley Davis (@harleydavis2)" src="assets/footer-light.svg" width="620">
+</picture>
 
-</sub>
+[@asta-maxx](https://github.com/asta-maxx) · [@Anbi105](https://github.com/Anbi105) · [@harleydavis2](https://github.com/harleydavis2)
 
-<a href="https://github.com/asta-maxx">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/footer-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="assets/footer-light.svg">
-    <img alt="Built by Allen — @asta-maxx" src="assets/footer-light.svg" width="380">
-  </picture>
-</a>
+<sub>Built for the unedited take — every command is a Makefile target, and every stage prints its evidence.</sub>
 
 </div>

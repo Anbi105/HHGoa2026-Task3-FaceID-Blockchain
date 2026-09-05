@@ -26,9 +26,14 @@ from typing import Dict, List, Tuple
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "assets"
 
-AUTHOR = "Allen"
-HANDLE = "asta-maxx"
-AVATAR = OUT / "avatar.png"
+TEAM = "OneReign"
+
+# (display name, github handle, numeric id -> assets/avatar-<id>.png)
+CONTRIBUTORS = [
+    ("Allen", "asta-maxx", 80756651),
+    ("Anbi", "Anbi105", 172527526),
+    ("Harley Davis", "harleydavis2", 221184282),
+]
 
 MONO = "ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace"
 SANS = "-apple-system,BlinkMacSystemFont,Segoe UI,Noto Sans,Helvetica,Arial,sans-serif"
@@ -310,63 +315,74 @@ def demo(t: Dict[str, str]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _avatar_data_uri() -> str | None:
-    """Inline the avatar as base64.
+def _avatar_data_uri(uid: int) -> str | None:
+    """Inline an avatar as base64.
 
-    An <image href="https://..."> inside an SVG is blocked when GitHub
-    serves the file through its image proxy, so the bytes have to travel
-    with the graphic.
+    An <image href="https://…"> inside an SVG is blocked when GitHub serves
+    the file through its image proxy, so the bytes have to travel with the
+    graphic.  It also means the footer keeps rendering if an avatar URL
+    ever changes.
     """
-    if not AVATAR.exists():
+    path = OUT / f"avatar-{uid}.png"
+    if not path.exists():
         return None
-    return "data:image/png;base64," + base64.b64encode(AVATAR.read_bytes()).decode()
+    return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode()
 
 
 def footer(t: Dict[str, str]) -> str:
-    W, H = 760, 190
-    cx, r = W / 2, 34
-    ay = 52
+    W = 760
+    r, ay = 34, 106         # avatar radius, centre y
+    H = 252
 
     b: List[str] = [rect(0, 0, W, H, fill=t["bg"], rx=0)]
-    b.append(
-        f'<path d="M180 18 H580" stroke="{t["border"]}" stroke-width="1" fill="none"/>'
-    )
+    b.append(f'<path d="M300 22 H460" stroke="{t["border"]}" stroke-width="1" fill="none"/>')
 
-    uri = _avatar_data_uri()
-    if uri:
-        b.append(
-            f'<defs><clipPath id="av"><circle cx="{cx}" cy="{ay + r}" r="{r}"/>'
-            f"</clipPath></defs>"
-        )
-        b.append(
-            f'<image href="{uri}" xlink:href="{uri}" x="{cx - r}" y="{ay}" '
-            f'width="{r * 2}" height="{r * 2}" clip-path="url(#av)" '
-            f'preserveAspectRatio="xMidYMid slice"/>'
-        )
-    else:
-        b.append(f'<circle cx="{cx}" cy="{ay + r}" r="{r}" fill="{t["panel2"]}"/>')
+    b.append(text(W / 2, 56, TEAM, fill=t["text"], size=24, family=SANS,
+                  weight="700", anchor="middle", spacing="-0.4"))
 
-    # Ring, drawn over the image so the edge stays crisp.
-    b.append(
-        f'<circle cx="{cx}" cy="{ay + r}" r="{r}" fill="none" '
-        f'stroke="{t["purple"]}" stroke-width="2" opacity="0.85"/>'
-    )
-    b.append(
-        f'<circle cx="{cx}" cy="{ay + r}" r="{r + 5}" fill="none" '
-        f'stroke="{t["border"]}" stroke-width="1"/>'
-    )
+    n = len(CONTRIBUTORS)
+    span = 210
+    x0 = W / 2 - span * (n - 1) / 2
 
-    b.append(text(cx, ay + r * 2 + 30, f"Built by {AUTHOR}", fill=t["text"],
-                  size=17, family=SANS, weight="700", anchor="middle"))
-    b.append(text(cx, ay + r * 2 + 50, f"@{HANDLE}", fill=t["purple"],
-                  size=13, family=MONO, anchor="middle"))
-    return svg(W, H, "".join(b), f"Built by {AUTHOR} (@{HANDLE})")
+    defs, art = [], []
+    for i, (name, handle, uid) in enumerate(CONTRIBUTORS):
+        cx = x0 + i * span
+        uri = _avatar_data_uri(uid)
+        cid = f"av{i}"
+        if uri:
+            defs.append(f'<clipPath id="{cid}"><circle cx="{cx}" cy="{ay}" r="{r}"/></clipPath>')
+            art.append(
+                f'<image href="{uri}" xlink:href="{uri}" x="{cx - r}" y="{ay - r}" '
+                f'width="{r * 2}" height="{r * 2}" clip-path="url(#{cid})" '
+                f'preserveAspectRatio="xMidYMid slice"/>'
+            )
+        else:
+            art.append(f'<circle cx="{cx}" cy="{ay}" r="{r}" fill="{t["panel2"]}"/>')
+
+        # Ring over the image so the edge stays crisp.
+        art.append(f'<circle cx="{cx}" cy="{ay}" r="{r}" fill="none" '
+                   f'stroke="{t["purple"]}" stroke-width="2" opacity="0.85"/>')
+        art.append(f'<circle cx="{cx}" cy="{ay}" r="{r + 5}" fill="none" '
+                   f'stroke="{t["border"]}" stroke-width="1"/>')
+        art.append(text(cx, ay + r + 28, name, fill=t["text"], size=14,
+                        family=SANS, weight="600", anchor="middle"))
+        art.append(text(cx, ay + r + 47, f"@{handle}", fill=t["purple"], size=11.5,
+                        family=MONO, anchor="middle"))
+
+    b.append(f"<defs>{''.join(defs)}</defs>")
+    b.extend(art)
+
+    b.append(text(W / 2, H - 22, "Hacker House Goa 2026  ·  Task 3", fill=t["faint"],
+                  size=11.5, family=MONO, anchor="middle", spacing="0.3"))
+    names = ", ".join(c[1] for c in CONTRIBUTORS)
+    return svg(W, H, "".join(b), f"{TEAM} — {names}")
 
 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
-    if not AVATAR.exists():
-        print(f"  note: {AVATAR.relative_to(ROOT)} missing — footer will use a placeholder")
+    for _, handle, uid in CONTRIBUTORS:
+        if not (OUT / f"avatar-{uid}.png").exists():
+            print(f"  note: avatar-{uid}.png missing for @{handle} — placeholder used")
     for name, fn in (("hero", hero), ("pipeline", pipeline), ("demo", demo),
                      ("footer", footer)):
         for theme, palette in THEMES.items():
