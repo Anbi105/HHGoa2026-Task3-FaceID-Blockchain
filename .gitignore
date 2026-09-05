@@ -1,0 +1,23 @@
+# ── Biometric and secret data — never commit ────────────────────────
+data/consent/          # consent tokens and per-subject salts
+data/calib/*/          # real subjects' calibration photos
+!data/calib/README.md
+out/                   # run artifacts, including raw embeddings
+
+# ── Environment ─────────────────────────────────────────────────────
+.env
+.venv/
+venv/
+
+# ── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# ── Tooling ─────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.DS_Store
