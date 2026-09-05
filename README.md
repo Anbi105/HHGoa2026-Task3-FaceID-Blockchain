@@ -308,4 +308,13 @@ Built for the unedited take. Every command is a Makefile target so nothing is ty
 and every stage prints its evidence so the viewer never has to take your word for anything.
 
 </sub>
+
+<a href="https://github.com/asta-maxx">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/footer-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/footer-light.svg">
+    <img alt="Built by Allen — @asta-maxx" src="assets/footer-light.svg" width="380">
+  </picture>
+</a>
+
 </div>
