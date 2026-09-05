@@ -1,56 +1,56 @@
 <div align="center">
 
-# FaceProof
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="assets/hero-light.svg">
+  <img alt="FaceProof — consent-gated face identification for on-chain attestation" src="assets/hero-light.svg" width="100%">
+</picture>
 
-**Consent-gated face identification for on-chain attestation**
-
-Hacker House Goa 2026 · Task 3 · **Stage 1 — the probe**
+<br/>
 
 [![tests](https://github.com/Anbi105/HHGoa2026-Task3-FaceID-Blockchain/actions/workflows/tests.yml/badge.svg?branch=person-1%2Fstage-1-probe)](https://github.com/Anbi105/HHGoa2026-Task3-FaceID-Blockchain/actions/workflows/tests.yml)
-[![coverage](https://img.shields.io/badge/coverage-97%25-brightgreen)](#tests)
-[![tests count](https://img.shields.io/badge/tests-167-brightgreen)](#tests)
-[![python](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13%20|%203.14-3776AB?logo=python&logoColor=white)](pyproject.toml)
-[![model](https://img.shields.io/badge/model-InsightFace%20buffalo__l-orange)](DECISIONS.md)
-[![stage](https://img.shields.io/badge/stage-1%20of%203-informational)](#where-this-sits)
+[![coverage](https://img.shields.io/badge/coverage-97%25-3fb950?labelColor=1f2328)](#tests)
+[![tests count](https://img.shields.io/badge/tests-167-3fb950?labelColor=1f2328)](#tests)
+[![python](https://img.shields.io/badge/python-3.11%20→%203.14-3776AB?logo=python&logoColor=white&labelColor=1f2328)](pyproject.toml)
+[![stage](https://img.shields.io/badge/stage-1%20of%203-8250df?labelColor=1f2328)](#where-this-sits)
 
-*A face never becomes a vector without consent. A withdrawn consent makes every past commitment unverifiable — including one already written to an immutable chain.*
+**A face never becomes a vector without consent.**<br/>
+Withdraw that consent and every past commitment becomes unverifiable — including one already written to an immutable chain.
 
 </div>
 
 ---
 
-## What this does
+## The pipeline
 
-Turns an image into a **512-dimensional ArcFace embedding** — or refuses, and says exactly why. Then commits to that embedding without ever revealing it, and hands Stage 2 a serialised artifact it can read from disk.
-
-```mermaid
-flowchart LR
-    IMG[/"probe image"/] --> CG{{"CONSENT GATE"}}
-    CG -->|"no valid consent"| REF["REFUSED<br/>exit 2"]
-    CG -->|"granted, in scope,<br/>unexpired"| DET["SCRFD<br/>detect"]
-    DET --> QG{{"quality gate<br/>4 checks"}}
-    QG -->|"fails"| ABS["ABSTAIN<br/>exit 1"]
-    QG -->|"passes"| ENC["ArcFace 512-d<br/>L2-normalised"]
-    ENC --> COM["keccak256 commitments"]
-    COM --> OUT[("out/run-id/")]
-    ABS --> OUT
-    OUT --> S2["Stage 2<br/>discovery"]
-    S2 --> S3["Stage 3<br/>attestation"]
-
-    classDef gate fill:#7c3aed,stroke:#5b21b6,color:#fff
-    classDef bad fill:#dc2626,stroke:#991b1b,color:#fff
-    classDef warn fill:#d97706,stroke:#92400e,color:#fff
-    classDef good fill:#059669,stroke:#065f46,color:#fff
-    classDef next fill:#64748b,stroke:#475569,color:#fff,stroke-dasharray:4 3
-    class CG,QG gate
-    class REF bad
-    class ABS warn
-    class ENC,COM,OUT good
-    class S2,S3 next
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/pipeline-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="assets/pipeline-light.svg">
+  <img alt="Pipeline: probe image, consent gate, SCRFD detect, quality gate, ArcFace 512-d, keccak256 commitments, run directory" src="assets/pipeline-light.svg" width="100%">
+</picture>
 
 > [!IMPORTANT]
 > **The consent gate runs before `cv2.imread`.** For a subject with no valid consent, no image is read, no face is detected, and no vector is computed. `test_refusal_happens_before_detection` asserts the detector is never called on that path — the refusal is provably inert, not a printed disclaimer.
+
+---
+
+## See it run
+
+Every command is a Makefile target, so nothing is typed live during the take. This is real output, not a mock-up.
+
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/demo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="assets/demo-light.svg">
+  <img alt="Terminal transcript: probe refused, consent granted, probe accepted, consent revoked, probe refused again" src="assets/demo-light.svg" width="760">
+</picture>
+</div>
+
+The arc is the argument. The **same image** is refused, then accepted, then refused again — and the third refusal is permanent, because revocation destroyed the salt.
+
+```bash
+make demo    # runs exactly the sequence above
+```
 
 ---
 
@@ -69,47 +69,27 @@ make test     # 167 tests, ~0.4s, no model and no network required
 ```
 
 > [!TIP]
-> `make setup` exists because of the unedited-recording constraint. Nothing on the critical path may be slow, so the weights are staged before the camera rolls.
-
----
-
-## The demo
-
-`make demo` runs the whole sequence. Steps **2** and **7** are the point.
-
-<table>
-<tr><th align="center">#</th><th align="left">Command</th><th align="left">What the camera sees</th></tr>
-<tr><td align="center">1</td><td><code>make config</code></td><td>Every parameter in force, printed from the same object the run uses</td></tr>
-<tr><td align="center"><b>2</b></td><td><code>make probe</code></td><td>🔴 <b>REFUSED</b> — <code>no_consent_on_record</code>. Nothing was read.</td></tr>
-<tr><td align="center">3</td><td><code>make consent-grant SUBJECT=alice</code></td><td>Token + 256-bit salt created, stored locally at mode 600</td></tr>
-<tr><td align="center">4</td><td><code>make probe SUBJECT=alice</code></td><td>🟢 <b>PASS</b> → <code>probe.json</code>, <code>embedding.f32</code>, <code>manifest.jsonl</code></td></tr>
-<tr><td align="center">5</td><td><code>make probe SUBJECT=alice IMAGE=data/demo/noface.jpg</code></td><td>🟡 <b>ABSTAIN</b> — a correct outcome, with its own record</td></tr>
-<tr><td align="center">6</td><td><code>make consent-revoke SUBJECT=alice</code></td><td>🔥 Salt <b>DESTROYED</b></td></tr>
-<tr><td align="center"><b>7</b></td><td><code>make probe SUBJECT=alice</code></td><td>🔴 <b>REFUSED</b> — <code>consent_revoked</code>. The same image, now inert.</td></tr>
-</table>
+> `make setup` exists because of the unedited-recording constraint: nothing on the critical path may be slow, so the weights are staged before the camera rolls.
 
 <details>
-<summary><b>Actual terminal output, step 4</b></summary>
+<summary><b>Every command</b></summary>
 
-```
-probe run_start      run_id=20260905T182509Z-4eb565  image=data/demo/synthetic_face.jpg
-probe config         model=insightface/buffalo_l@w600k_r50  pipeline=faceproof/1.1.0
-probe consent_ok     scope=face_probe_demo  expires_at=2026-10-05T18:25:08Z
-                     subject_commitment=0x4be251521df89d44...
-probe quality_gate   result=PASS  det_score=0.7729  face_px=199  blur_var=827.38  n_faces=1
+| Command | Purpose |
+|---------|---------|
+| `make setup` | Pre-download model weights |
+| `make config` | Print the effective configuration |
+| `make consent-grant SUBJECT=alice` | Record consent |
+| `make consent-list` | Show every record and its live status |
+| `make consent-revoke SUBJECT=alice` | Withdraw consent, destroy the salt |
+| `make probe SUBJECT=alice IMAGE=…` | Run a consent-gated probe |
+| `make calibrate` | Measure the acceptance threshold |
+| `make demo` | The full recorded sequence |
+| `make test` / `make cov` | Tests, with coverage |
+| `make fixtures` | Regenerate + verify synthetic demo images |
+| `make demo-variants SRC=photo.jpg` | Derive gate demos from a real photo |
+| `make clean-runs` | Delete `out/` |
 
-╭──────────────────────────────────────────────────────────╮
-│ QUALITY_GATE=PASS                                        │
-╰──────────────────────────────────────────────────────────╯
-
-probe encoded        dim=512  dtype=float32  l2_norm=1.0
-probe artifact       path=out/run-.../embedding.f32  bytes=2048  sha256=1169bd9fa8777d67...
-probe commitment     embedding=0x81956d3dc0ac9d31ef8eb2377c7f25e4...
-probe commitment     subject=0x4be251521df89d44c14d2eb3156d272e...
-probe run_end        status=accepted
-```
-
-Every line lands in `manifest.jsonl` with a timestamp and an elapsed offset. A silent pipeline that prints `Done` proves nothing on video.
+Exit codes: `0` accepted · `1` abstain · `2` refused, no consent · `3` usage error.
 
 </details>
 
@@ -129,19 +109,11 @@ Checks run in order. The first failure reports **the value and the threshold it 
 | 5 | Single subject | `secondary/primary ≤ 0.60` | `ambiguous_subject:2_faces_ratio_0.99>0.6` |
 
 > [!NOTE]
-> Check 5 is the one people skip. Group photos are the most common realistic input, and silently picking the largest face is how you produce a confidently wrong match on video. A blurry, angled or 40-pixel face produces an embedding that is *confidently wrong* — reject early and say why.
-
-**Exit codes:** `0` accepted · `1` abstain · `2` refused, no consent · `3` usage error.
+> Check 5 is the one people skip. Group photos are the most common realistic input, and silently picking the largest face is how you produce a confidently wrong match on video. A blurry, angled or 40-pixel face yields an embedding that is *confidently wrong* — reject early and say why.
 
 ---
 
 ## Consent, commitments, erasure
-
-```bash
-make consent-grant  SUBJECT=alice
-make consent-list
-make consent-revoke SUBJECT=alice
-```
 
 A grant mints a random consent token and a **256-bit per-subject salt**, stored at `data/consent/store.json` (mode `600`, gitignored). Neither ever leaves the host.
 
@@ -149,13 +121,13 @@ Exactly two values cross into the attestation path, both opaque 32-byte digests:
 
 | Leaf | Value | Why it carries nothing |
 |------|-------|------------------------|
-| subject | `keccak256(consent_token)` | The token is a random UUID4. It commits to a *consent event*, not to a person — two grants to the same subject produce unrelated digests. |
-| probe | `keccak256(salt ‖ embedding)` | Commits to the face without carrying it. Little-endian float32, pinned by golden tests so the encoding cannot drift. |
+| **subject** | `keccak256(consent_token)` | The token is a random UUID4. It commits to a *consent event*, not a person — two grants to the same subject produce unrelated digests. |
+| **probe** | `keccak256(salt ‖ embedding)` | Commits to the face without carrying it. Little-endian float32, pinned by golden tests so the encoding cannot drift. |
 
 > [!WARNING]
-> **Revocation destroys the salt and keeps the record.** Afterwards, reproducing an anchored `keccak256(salt ‖ embedding)` means guessing 256 bits — including for a root already written to an immutable chain. The record survives so the withdrawal stays auditable.
+> **Revocation destroys the salt and keeps the record.** Afterwards, reproducing an anchored `keccak256(salt ‖ embedding)` means guessing 256 bits — including for a root already on chain. The record survives so the withdrawal stays auditable.
 >
-> This is the erasure path, and `test_commitment_unverifiable_after_erasure` asserts it. The guarantee is **"unverifiable"**, not "deleted" — see [LIMITATIONS.md](LIMITATIONS.md#9-erasure-covers-this-host-not-copies).
+> `test_commitment_unverifiable_after_erasure` asserts it. The guarantee is **"unverifiable"**, not "deleted" — see [LIMITATIONS.md](LIMITATIONS.md).
 
 ---
 
@@ -166,7 +138,7 @@ Stage 2 reads the run directory. It does not import Stage 1's objects — that b
 ```python
 from faceproof.handoff import load_record, read_embedding
 
-run = "out/run-20260905T182509Z-4eb565"
+run = "out/run-demo"
 record = load_record(run)
 vector = read_embedding(run)          # (512,) float32, L2-normalised
 
@@ -181,7 +153,7 @@ else:
 
 | File | Contents | Safe to show? |
 |------|----------|:-------------:|
-| `probe.json` | Status, quality measurements, the gate that was applied, full config, image digest, both commitments | ✅ no biometrics, no PII |
+| `probe.json` | Status, quality measurements, the gate applied, full config, image digest, both commitments | ✅ no biometrics, no PII |
 | `embedding.f32` | The raw 512-d vector, little-endian float32, 2048 bytes | ❌ **local only**, gitignored |
 | `manifest.jsonl` | Append-only run log with artifact digests | ✅ |
 
@@ -265,8 +237,8 @@ make test    # 167 tests, ~0.4s
 make cov     # 97% statement coverage
 ```
 
-| Property | Status |
-|----------|--------|
+| Property | |
+|----------|--|
 | Model weights required | ❌ none — `insightface` is imported lazily inside `app()` |
 | Network required | ❌ none |
 | Writes outside `tmp_path` | ❌ none — an autouse fixture repoints `data_dir` and `out_dir` |
@@ -285,7 +257,7 @@ make cov     # 97% statement coverage
 | Embedding byte encoding changed | `test_embedding_bytes_are_pinned` |
 
 > [!NOTE]
-> The golden-vector tests in `test_golden.py` pin the embedding encoding and the resulting commitment to fixed hex, and assert Ethereum `keccak256` rather than NIST SHA3. If one fails, **do not update the expected value** — a changed encoding invalidates every commitment already anchored.
+> The golden-vector tests pin the embedding encoding and the resulting commitment to fixed hex, and assert Ethereum `keccak256` rather than NIST SHA3. If one fails, **do not update the expected value** — a changed encoding invalidates every commitment already anchored.
 
 ---
 
@@ -308,22 +280,24 @@ make cov     # 97% statement coverage
 │   ├── calibrate.py   threshold measurement                           §5 · D3
 │   └── cli.py         the recorded surface
 ├── tests/             167 tests, fully mocked
-├── scripts/           fixture generators, self-verifying
-└── data/demo/         synthetic smoke-test inputs
+├── scripts/           fixture + artwork generators, self-verifying
+└── assets/            README artwork, light and dark
 ```
 
 ---
 
 ## Design rationale
 
-Fourteen decisions with their trade-offs live in **[DECISIONS.md](DECISIONS.md)** — six from the guide, thirteen specific to this implementation. Highlights:
+Nineteen decisions with their trade-offs live in **[DECISIONS.md](DECISIONS.md)** — six from the guide, thirteen specific to this implementation:
 
 - **Why the consent check precedes `imread`** — checking after encoding means a biometric already exists for someone who did not agree
 - **Why the subject leaf hashes the token, not the subject id** — a 32-byte digest of a short string is trivially brute-forced
 - **Why `Rejection` subclasses `str`** — carries its metrics without breaking a single existing caller
-- **Why the salt is retained but the record survives revocation** — erasure without destroying the audit trail
+- **Why revocation destroys the salt but keeps the record** — erasure without destroying the audit trail
 
 Ten honest constraints live in **[LIMITATIONS.md](LIMITATIONS.md)**, including no liveness detection, unmeasured demographic performance, and the fact that erasure covers this host and not copies.
+
+<sub>Artwork is generated, not hand-drawn: `python scripts/gen_readme_assets.py` rebuilds every SVG in both themes.</sub>
 
 ---
 
