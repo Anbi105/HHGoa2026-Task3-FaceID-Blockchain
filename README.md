@@ -34,11 +34,11 @@ Only cryptographic commitments are anchored. Withdraw consent and every past com
 > [!IMPORTANT]
 > **The consent gate runs before `cv2.imread`.** For a subject with no valid consent, no image is read, no face is detected, and no vector is computed. `test_refusal_happens_before_detection` asserts the detector is never called on that path — the refusal is provably inert, not a printed disclaimer.
 
-| Stage | Job | Modules | Owner | Status |
-|:-----:|-----|---------|-------|--------|
-| **1** | **Probe** — detect, gate, encode, consent-bind → write the handoff | `config` `manifest` `face` `consent` `handoff` `calibrate` `cli` | Person 1 | ✅ complete · calibration data pending |
-| **2** | **Discovery** — social index + reverse-image search → a match or an abstain | Person 2, branch `origin/person2` | Person 2 | ⬜ in progress (separate branch) |
-| **3** | **Attestation** — canonicalise, commit, Merkle, anchor, re-verify | `canonical` `merkle` `bundle` `stage2_adapter` `chain` `anchor` `verify` `run` + `contracts/` | Person 3 | ✅ complete |
+| Stage | What it does |
+|:-----:|--------------|
+| **1 of 3 — Face Identity / Probe** | Detect a face, apply the quality gate (detector confidence, face size, blur, multi-face ambiguity), encode to a 512-d L2-normalised vector, bind it to a consent grant, and write the handoff record. Modules: `config` `manifest` `face` `consent` `handoff` `calibrate` `cli`. |
+| **2 of 3 — Evidence Discovery / Matching** | Search the probe against a self-built public-post face index (Channel A) and reverse-image search (Channel B), re-score every candidate locally, and fuse the channels into `corroborated`, `single_channel_{a,b}`, or `abstain`. Stage 3 reads the fused result through a read-only adapter. |
+| **3 of 3 — Blockchain Attestation** | Canonicalise the accepted evidence into eight field groups, commit each to a keccak256 Merkle leaf, build the root, anchor it on chain, then independently re-verify, prove selective disclosure, and demonstrate tamper detection. Modules: `canonical` `merkle` `bundle` `stage2_adapter` `chain` `anchor` `verify` `run` + `contracts/`. |
 
 Stage 3 takes the evidence the earlier stages produced and turns it into a **reproducible, tamper-evident cryptographic attestation**: eight canonical evidence groups → eight Merkle leaves → one root → one on-chain record. Anyone can later recompute the root from the bundle and check it against the chain.
 
@@ -73,7 +73,7 @@ make demo    # runs exactly the sequence above (Stage 1)
 ### Clone and install
 
 ```bash
-git clone -b person3-blockchain https://github.com/Anbi105/HHGoa2026-Task3-FaceID-Blockchain.git
+git clone https://github.com/Anbi105/HHGoa2026-Task3-FaceID-Blockchain.git
 cd HHGoa2026-Task3-FaceID-Blockchain
 python -m venv .venv
 ```
@@ -90,7 +90,7 @@ python -m venv .venv
 source .venv/bin/activate && pip install -e ".[dev]"
 ```
 
-Installing the package pulls in the Stage 3 dependencies (`web3`, `eth-utils`) alongside Person 1's pinned stack. For the smart-contract half you also need [Foundry](https://getfoundry.sh) (`forge`, `anvil`) on your `PATH`.
+Installing the package pulls in the Stage 3 dependencies (`web3`, `eth-utils`) alongside the core pipeline stack. For the smart-contract half you also need [Foundry](https://getfoundry.sh) (`forge`, `anvil`) on your `PATH`.
 
 ### Run the tests
 
@@ -577,16 +577,16 @@ No Merkle root, no anchor, no false-positive attestation. Quality-gate rejection
 
 | Bucket | Count | Notes |
 |--------|:-----:|-------|
-| Stage 1 (Person 1) | 167 | detection, gate, consent, handoff, manifest, calibrate, CLI, golden vectors — unchanged |
-| Stage 3 Python (Person 3) | 54 | `test_canonical` 8 · `test_merkle` 11 · `test_bundle` 11 · `test_stage2_adapter` 5 · `test_verify` 7 · `test_run` 7 · `test_chain` 5 |
+| Stage 1 · probe | 167 | detection, gate, consent, handoff, manifest, calibrate, CLI, golden vectors |
+| Stage 3 · attestation | 54 | `test_canonical` 8 · `test_merkle` 11 · `test_bundle` 11 · `test_stage2_adapter` 5 · `test_verify` 7 · `test_run` 7 · `test_chain` 5 |
 | Skipped locally | 4 | `test_chain.py` cases that need a running Anvil node |
 | Coverage | **97%** | `chain.py` / `anchor.py` (live-RPC glue) omitted via `.coveragerc`; everything else measured |
 
 > [!NOTE]
-> **Two Stage 1 tests fail on Windows only** and are **not** caused by Stage 3:
-> `tests/test_consent.py::test_file_permissions_are_owner_only` (asserts POSIX `chmod 0600`, which Windows Python does not implement) and
-> `tests/test_manifest.py::test_non_serialisable_values_do_not_crash` (asserts a POSIX `/tmp/x` path string).
-> Both pass on the project's `ubuntu-latest` CI matrix (Python 3.11 / 3.12 / 3.13), and both fail identically on a pristine checkout with none of the Stage 3 work applied. Person 1's implementation and tests were **not** modified to hide them.
+> **Two tests assert POSIX-only file semantics and fail on Windows:**
+> `tests/test_consent.py::test_file_permissions_are_owner_only` (POSIX `chmod 0600`, not implemented by Windows Python) and
+> `tests/test_manifest.py::test_non_serialisable_values_do_not_crash` (expects a `/tmp/x` path string).
+> Both pass on the `ubuntu-latest` CI matrix (Python 3.11 / 3.12 / 3.13).
 
 ### Foundry tests
 
@@ -654,19 +654,19 @@ With a local node running (`make anvil` in another terminal), `tests/test_chain.
 
 ## Limitations
 
-Stage-3-specific constraints (Stage 1's own limits are in **[LIMITATIONS.md](LIMITATIONS.md)**):
+Stage-3-specific constraints (the pipeline's broader limits are in **[LIMITATIONS.md](LIMITATIONS.md)**):
 
-- **No live Polygon Amoy anchor.** The Amoy code path is complete and shares `chain.py` with Anvil, but firing it needs a funded testnet account. There is no deployed Amoy address in this repo.
+- **No live Polygon Amoy anchor yet.** The Amoy code path is complete and shares `chain.py` with Anvil, but firing it needs a funded testnet account. There is no deployed Amoy address in this repo; the local Anvil path is fully exercised.
 - **The ABI artifact is generated, not committed.** `contracts/out/` is gitignored, so `chain.py` needs `forge build` (or `make deploy`) to run once before any chain operation. Standard for Foundry projects; the Makefile targets and CI handle it.
-- **Stage 2 is on a separate branch.** When no Stage 2 result file is present in the run directory, `stage2_adapter` falls back to a **clearly labelled synthetic fixture** (`source: "synthetic-stub"`, `channels_used: ["channel_a:synthetic-stub"]`) so the pipeline is demonstrable end-to-end. It is unmistakable in the manifest and the bundle provenance that no real discovery took place.
-- **Anvil deployment addresses are deterministic and disposable.** Any address or transaction hash shown here comes from a local throwaway chain and regenerates on every run.
-- **Two Windows-only Stage 1 test failures** (see [Tests](#tests)) — pre-existing, green on Linux CI, untouched by Stage 3.
+- **Stage 3 consumes the discovery result through a read-only adapter.** When no Stage 2 result file is present in the run directory, `stage2_adapter` falls back to a **clearly labelled synthetic fixture** (`source: "synthetic-stub"`, `channels_used: ["channel_a:synthetic-stub"]`) so the attestation path is demonstrable in isolation. It is unmistakable in the manifest and the bundle provenance when no real discovery took place.
+- **Anvil deployment addresses are deterministic and disposable.** Any address or transaction hash shown for a local run comes from a throwaway chain and regenerates on every run.
+- **Two tests assert POSIX-only file semantics** and fail on Windows (see [Tests](#tests)); both pass on the Linux CI.
 
 ---
 
 ## Design rationale
 
-Person 1's nineteen decisions live in **[DECISIONS.md](DECISIONS.md)**. Stage 3 adds a few of its own:
+The pipeline's design decisions live in **[DECISIONS.md](DECISIONS.md)**. Stage 3 adds a few of its own:
 
 - **Why the root is recomputed, never trusted** — a verifier that compares against the stored `merkle_root` proves nothing; verification rebuilds every leaf from the group bytes and derives the root itself.
 - **Why leaves are double-hashed** — `keccak256(keccak256(x))` domain-separates a leaf from an internal node, so a proof cannot pass off an internal node as a leaf.
