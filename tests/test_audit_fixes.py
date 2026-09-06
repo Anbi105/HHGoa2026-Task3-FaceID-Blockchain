@@ -246,3 +246,28 @@ def test_accept_at_is_not_used_as_retrieval_timestamp():
     )
     assert res["retrieval_timestamp"] != "0.55"
     assert res["match"]["threshold"] == q(0.55) or "0.55" in res["match"]["threshold"]
+
+
+# --------------------------------------------------------------------------- #
+# #7 - a requested on-chain check that cannot run is a FAILURE, not a skip
+# --------------------------------------------------------------------------- #
+
+def test_verify_run_fails_when_requested_chain_check_cannot_run(tmp_path, monkeypatch):
+    import faceproof.verify as verify_mod
+
+    assemble_bundle(tmp_path, _stage1(), _stage2())
+    # a receipt with a contract -> verify_run "wants" the on-chain check
+    (tmp_path / "receipt.json").write_text(json.dumps({
+        "chain": "anvil", "contract": "0x" + "11" * 20, "anchor_id": 0,
+        "root": "0x" + "00" * 32, "tx_hash": "0xabc", "status": 1,
+    }))
+
+    def _boom(*a, **k):
+        raise ConnectionError("cannot reach anvil RPC")
+
+    monkeypatch.setattr(verify_mod, "_check_chain", _boom)
+
+    # local checks pass, but the wanted on-chain check errored -> overall FALSE
+    assert verify_mod.verify_run(tmp_path, check_chain=True) is False
+    # and with the chain check not requested, the same run verifies locally
+    assert verify_mod.verify_run(tmp_path, check_chain=False) is True

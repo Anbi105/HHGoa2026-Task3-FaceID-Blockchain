@@ -309,6 +309,8 @@ make demo-variants SRC=path/to/photo.jpg
 > | Anchor tx (id `0`) | [`0x4365d17c38ea8851ca18f62486b4f7471ab1b8023f9078c672e1c4552ab980b8`](https://amoy.polygonscan.com/tx/0x4365d17c38ea8851ca18f62486b4f7471ab1b8023f9078c672e1c4552ab980b8) · block `46888956` |
 > | Anchored root | `0xbd9643d34189af122492472303311cf2bac38066d9c00b98906a91ad69a0d8fc` |
 > | Schema | `faceproof.evidence.v1` — `keccak256` = `0x4db08a5aed7495d51e220b32349500509c6aad15505ad77c9566300ff4f91452` |
+>
+> This anchor predates the audit fixes on `fix/audit-blockers`: the consent leaf then carried a duplicated `subject_ref`, so a bundle built by current code produces a different root. It was not re-anchored (no testnet spend). The deployed contract also predates `verifyField`'s `proof.length == 3` guard.
 
 Stage 3 consumes the Stage 1 handoff (`probe.json`) and a Stage 2 discovery result, and produces three files under `out/run-<id>/`:
 
@@ -407,10 +409,10 @@ The Python rules are mirrored **byte-for-byte** by the `MerkleLite` library insi
   "pipeline_version": "faceproof/1.1.0",
   "group_order": ["probe","consent","match_location","match_author",
                   "match_text","match_image","scores","provenance"],
-  "merkle_root": "0xbd9643d34189af122492472303311cf2bac38066d9c00b98906a91ad69a0d8fc",
+  "merkle_root": "0x…",
   "groups": {
     "probe":    { "commitment": "0x…", "model_id": "…", "det_score": "0.960000", "blur_var": "72.500000" },
-    "consent":  { "subject_ref": "0x…", "commitment": "0x…", "granted_at": "…", "scope": "face_probe_demo" },
+    "consent":  { "commitment": "0x…", "granted_at": "…", "scope": "face_probe_demo" },
     "match_location": { "platform": "bluesky", "post_url": "…", "at_uri": "at://…" },
     "match_text":     { "sha256": "…", "length": 55 },
     "scores":        { "cosine": "0.700000", "margin": "0.110000", "threshold": "0.550000", "fusion_verdict": "SINGLE_CHANNEL_A" }
