@@ -6,6 +6,9 @@ data/consent/
 # real subjects' calibration photos:
 data/calib/*/
 !data/calib/README.md
+# Stage 2 corpus: re-fetched images, embeddings, post text — never commit:
+data/index/*
+!data/index/README.md
 # run artifacts, including raw embeddings:
 out/
 

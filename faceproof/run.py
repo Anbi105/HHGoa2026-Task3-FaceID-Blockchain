@@ -8,7 +8,9 @@ the tamper demo around that existing interface.
     python -m faceproof.run banner
     python -m faceproof.run index-stats
     python -m faceproof.run probe   --img data/demo/synthetic_face.jpg --subject alice
+    python -m faceproof.run stage2  --run-dir out/run-<id>            # Person 2 discovery -> stage2.json
     python -m faceproof.run search  --run-dir out/run-<id>            # or --img/--subject
+    python -m faceproof.run search  --run-dir out/run-<id> --real-stage2   # run Person 2 first
     python -m faceproof.run anchor  --run-dir out/run-<id>
     python -m faceproof.run verify  --run-dir out/run-<id> [--chain]
     python -m faceproof.run tamper  --run-dir out/run-<id>
@@ -100,6 +102,30 @@ def cmd_index_stats(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_stage2(args: argparse.Namespace) -> int:
+    """Run Person 2's real Channel A / Channel B / fusion; write stage2.json."""
+    from faceproof.stage2_bridge import Stage2Unavailable, index_stats, run_stage2
+
+    run_dir = _resolve_run_dir(args.run_dir)
+    stats = index_stats()
+    if stats:
+        console.print("[cyan]Stage 2 index[/cyan]")
+        console.print(json.dumps(stats, indent=2, sort_keys=True))
+    else:
+        console.print("[yellow]no local FAISS index under data/index/[/yellow] - "
+                      "Channel A cannot retrieve; Person 2's fusion will ABSTAIN.")
+    try:
+        payload = run_stage2(run_dir)
+    except Stage2Unavailable as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 3
+    console.print(
+        f"[green]stage2.json written[/green]  outcome={payload['fusion_outcome']}  "
+        f"channels={payload['channels_used']}"
+    )
+    return 0 if payload["fusion_outcome"] != "ABSTAIN" else 1
+
+
 def cmd_probe(args: argparse.Namespace) -> int:
     from faceproof.cli import cmd_probe as _p
 
@@ -129,6 +155,18 @@ def cmd_search(args: argparse.Namespace) -> int:
         manifest.log("STAGE 3", "ABSTAIN", reason="stage1_rejected")
         console.print("[yellow]ABSTAIN: Stage 1 rejected this probe; no bundle.[/yellow]")
         return 1
+
+    if getattr(args, "real_stage2", False):
+        from faceproof.stage2_bridge import Stage2Unavailable, run_stage2
+
+        try:
+            p2 = run_stage2(run_dir)
+            console.print(
+                f"[cyan]Stage 2 (Person 2 bridge)[/cyan]  outcome={p2['fusion_outcome']}  "
+                f"channels={p2['channels_used']}"
+            )
+        except Stage2Unavailable as exc:
+            console.print(f"[yellow]real Stage 2 unavailable: {exc}[/yellow]")
 
     stage2 = load_stage2(run_dir)
     manifest.log(
@@ -231,6 +269,7 @@ def cmd_demo(args: argparse.Namespace) -> int:
     ns = argparse.Namespace(
         run_dir=args.run_dir, img=args.img, subject=args.subject,
         anchor=args.anchor, no_tamper=False, chain=args.anchor,
+        real_stage2=getattr(args, "real_stage2", False),
     )
     rc = cmd_search(ns)
     if rc == 0 and not args.anchor:
@@ -248,13 +287,19 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="python -m faceproof.run", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    def with_common(sp, *, img=False, run_dir=False, anchor=False, chain=False, subject=False):
+    def with_common(sp, *, img=False, run_dir=False, anchor=False, chain=False, subject=False,
+                    real_stage2=False):
         if img:
             sp.add_argument("--img", "--image", dest="img", default=None)
         if subject or img:
             sp.add_argument("--subject", "-s", default="alice")
         if run_dir:
             sp.add_argument("--run-dir", dest="run_dir", default=None)
+        if real_stage2:
+            sp.add_argument(
+                "--real-stage2", dest="real_stage2", action="store_true",
+                help="run Person 2's real discovery/fusion first (writes stage2.json)",
+            )
         if anchor:
             sp.add_argument("--anchor", action="store_true")
             sp.add_argument("--no-tamper", dest="no_tamper", action="store_true")
@@ -265,7 +310,9 @@ def build_parser() -> argparse.ArgumentParser:
     with_common(sub.add_parser("banner", help="print the public pipeline config"))
     with_common(sub.add_parser("index-stats", help="print the index snapshot id/stats"))
     with_common(sub.add_parser("probe", help="Stage 1 probe (delegates to faceproof.cli)"), img=True)
-    with_common(sub.add_parser("search", help="assemble the evidence bundle"), img=True, run_dir=True, anchor=True)
+    with_common(sub.add_parser("stage2", help="Person 2 discovery/fusion -> stage2.json"), run_dir=True)
+    with_common(sub.add_parser("search", help="assemble the evidence bundle"),
+                img=True, run_dir=True, anchor=True, real_stage2=True)
     with_common(sub.add_parser("anchor", help="anchor the bundle root on-chain"), run_dir=True)
     with_common(sub.add_parser("verify", help="independent re-verification"), run_dir=True, chain=True)
     with_common(sub.add_parser("tamper", help="single-character tamper demonstration"), run_dir=True)
@@ -276,7 +323,8 @@ def build_parser() -> argparse.ArgumentParser:
     dp.add_argument("--rpc", default=None)
     dp.add_argument("--private-key", dest="private_key", default=None)
     with_common(sub.add_parser("anvil", help="start a local anvil node"))
-    with_common(sub.add_parser("demo", help="banner -> search -> verify"), img=True, run_dir=True, anchor=True)
+    with_common(sub.add_parser("demo", help="banner -> search -> verify"),
+                img=True, run_dir=True, anchor=True, real_stage2=True)
     return p
 
 
@@ -284,6 +332,7 @@ _DISPATCH = {
     "banner": cmd_banner,
     "index-stats": cmd_index_stats,
     "probe": cmd_probe,
+    "stage2": cmd_stage2,
     "search": cmd_search,
     "anchor": cmd_anchor,
     "verify": cmd_verify,

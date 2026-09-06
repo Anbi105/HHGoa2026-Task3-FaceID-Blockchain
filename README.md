@@ -37,10 +37,13 @@ Only cryptographic commitments are anchored. Withdraw consent and every past com
 | Stage | What it does |
 |:-----:|--------------|
 | **1 of 3 — Face Identity / Probe** | Detect a face, apply the quality gate (detector confidence, face size, blur, multi-face ambiguity), encode to a 512-d L2-normalised vector, bind it to a consent grant, and write the handoff record. Modules: `config` `manifest` `face` `consent` `handoff` `calibrate` `cli`. |
-| **2 of 3 — Evidence Discovery / Matching** | Search the probe against a self-built public-post face index (Channel A) and reverse-image search (Channel B), re-score every candidate locally, and fuse the channels into `corroborated`, `single_channel_{a,b}`, or `abstain`. Stage 3 reads the fused result through a read-only adapter. |
+| **2 of 3 — Evidence Discovery / Matching** | Search the probe against a self-built public-post face index (Channel A) and reverse-image search (Channel B), re-score every candidate locally, and fuse the channels into `corroborated`, `single_channel_{a,b}`, or `abstain`. Owned by Person 2 (branch `person2`, merged under `files-mentioned-by-the-user-hhgoa/`); reached from the root pipeline through `faceproof/stage2_bridge.py`, which runs Person 2's real `fuse` / `channel_b` / `index.search` and writes `stage2.json`. |
 | **3 of 3 — Blockchain Attestation** | Canonicalise the accepted evidence into eight field groups, commit each to a keccak256 Merkle leaf, build the root, anchor it on chain, then independently re-verify, prove selective disclosure, and demonstrate tamper detection. Modules: `canonical` `merkle` `bundle` `stage2_adapter` `chain` `anchor` `verify` `run` + `contracts/`. |
 
 Stage 3 takes the evidence the earlier stages produced and turns it into a **reproducible, tamper-evident cryptographic attestation**: eight canonical evidence groups → eight Merkle leaves → one root → one on-chain record. Anyone can later recompute the root from the bundle and check it against the chain.
+
+> [!NOTE]
+> **Live on Polygon Amoy** (chain id `80002`): `EvidenceRegistry` [`0xeE0efb2a3D75f1933f171dE8e8D9Dd14903170d3`](https://amoy.polygonscan.com/address/0xeE0efb2a3D75f1933f171dE8e8D9Dd14903170d3), deploy tx [`0xdf7bf9…5be79`](https://amoy.polygonscan.com/tx/0xdf7bf97cc2e1661efabfe60e1a367440f5e5119a4df1e15c48c425389785be79) (block `46888484`), anchor id `0` tx [`0x4365d1…980b8`](https://amoy.polygonscan.com/tx/0x4365d17c38ea8851ca18f62486b4f7471ab1b8023f9078c672e1c4552ab980b8) (block `46888956`). Anvil (chain id `31337`) is the deterministic offline fallback and needs no keys. Full three-stage run: [`application.md`](application.md).
 
 > [!CAUTION]
 > **No raw biometric data on chain. Ever.**
@@ -142,7 +145,8 @@ Exit codes: `0` accepted · `1` abstain · `2` refused, no consent · `3` usage 
 |---------|-----------------------------|---------|
 | `make banner` | `banner` | Print the public pipeline configuration |
 | `make index-stats` | `index-stats` | Print the index snapshot id / stats (read from Stage 2) |
-| `make search` | `search` | Stage 1 handoff → Stage 2 result → 8-group evidence bundle |
+| — | `stage2 --run-dir <d>` | Run Person 2's real discovery/fusion for a run → `stage2.json` |
+| `make search` | `search` | Stage 1 handoff → Stage 2 result → 8-group evidence bundle (add `--real-stage2` to run Person 2 first) |
 | `make anchor` | `anchor` | Anchor the latest run's Merkle root on-chain |
 | `make verify` | `verify` | Independently re-verify the latest run (`CHAIN=1` adds on-chain checks) |
 | `make tamper` | `tamper` | Single-character tamper demonstration |
@@ -647,18 +651,21 @@ With a local node running (`make anvil` in another terminal), `tests/test_chain.
 │   ├── merkle.py           double-keccak leaves, sorted-pair tree, proofs    [Stage 3]
 │   ├── bundle.py           the 8 evidence groups, root, proofs, abstain      [Stage 3]
 │   ├── stage2_adapter.py   read-only consumer of Stage 2's interface         [Stage 3]
+│   ├── stage2_bridge.py    runs Person 2's real fuse/channel_b/index → stage2.json  [integration]
 │   ├── chain.py            Web3.py — Anvil + Polygon Amoy, ABI from artifact [Stage 3]
 │   ├── anchor.py           anchor the root, write an auditable receipt       [Stage 3]
 │   ├── verify.py           independent re-verification, selective disclosure,
 │   │                       tamper demonstration                             [Stage 3]
-│   └── run.py              Stage 3 CLI: search / anchor / verify / tamper /
+│   └── run.py              Stage 3 CLI: stage2 / search / anchor / verify / tamper /
 │                           abstain / forget / deploy / anvil / demo         [Stage 3]
 ├── contracts/
 │   ├── src/EvidenceRegistry.sol    append-only registry + MerkleLite         [Stage 3]
 │   ├── test/EvidenceRegistry.t.sol 9 Foundry tests                          [Stage 3]
 │   ├── script/Deploy.s.sol         deploy script                            [Stage 3]
 │   └── foundry.toml                solc 0.8.24                              [Stage 3]
-├── tests/                  221 tests — Stage 1 (167) + Stage 3 (54), fully mocked
+├── files-mentioned-by-the-user-hhgoa/   Person 2's Stage 2 branch, merged   [Stage 2]
+├── tests/                  Stage 1 + Stage 3 + test_stage2_bridge, fully mocked
+├── application.md          the integrated three-stage architecture
 ├── scripts/                fixture + artwork generators, self-verifying
 └── assets/                 README artwork, light and dark
 ```
@@ -672,6 +679,9 @@ Stage-3-specific constraints (the pipeline's broader limits are in **[LIMITATION
 - **Polygon Amoy anchor is live but singular.** `EvidenceRegistry` is deployed at `0xeE0efb2a3D75f1933f171dE8e8D9Dd14903170d3` and exactly one root (anchor id `0`) has been anchored — a demonstration on the synthetic Stage 2 fixture, not a run over real discovery output. The Amoy code path shares `chain.py` with Anvil; the local Anvil path is still what the integration tests exercise on every commit.
 - **The ABI artifact is generated, not committed.** `contracts/out/` is gitignored, so `chain.py` needs `forge build` (or `make deploy`) to run once before any chain operation. Standard for Foundry projects; the Makefile targets and CI handle it.
 - **Stage 3 consumes the discovery result through a read-only adapter.** When no Stage 2 result file is present in the run directory, `stage2_adapter` falls back to a **clearly labelled synthetic fixture** (`source: "synthetic-stub"`, `channels_used: ["channel_a:synthetic-stub"]`) so the attestation path is demonstrable in isolation. It is unmistakable in the manifest and the bundle provenance when no real discovery took place.
+- **Stage 2 is wired in via `faceproof/stage2_bridge.py`, not a code merge.** Person 2's package is also named `faceproof` with an older, incompatible implementation, so the bridge loads only their dependency-free real functions (`fuse`, `channel_b`, `index.search`) by file path and emits `stage2.json`. This repo ships **no** FAISS corpus/index (Person 2 deliberately did not fabricate one — see [`data/index/README.md`](data/index/README.md)), so `stage2` / `search --real-stage2` in a clean clone demonstrates the **genuine abstain** path; the positive match path uses the synthetic fixture above. See [`application.md`](application.md).
+- **`data/calibration.json` is not committed.** `faceproof/calibrate.py` generates it from real consenting photos in `data/calib/<subject_id>/` (gitignored, absent — see [`data/calib/README.md`](data/calib/README.md)); until then `accept_at = 0.55` applies with a `make config` warning. It must be produced by a teammate with real calibration images — never fabricated.
+- **A live face probe needs model deps not in the test `.venv`.** `insightface==0.7.3` + `onnxruntime` + a one-time ~330 MB `buffalo_l` download are required for Stage 1 detection, calibration, and the blurry / group-photo gate fixtures (`scripts/make_demo_variants.py`). The `.venv` here runs the full **mocked** suite; it has no InsightFace. `requirements.lock.txt` (a py3.14 / numpy-2 freeze) also does not match that `.venv` — `pip install -e ".[dev]"` installs the tested set; the two dependency files should be reconciled before submission.
 - **Anvil deployment addresses are deterministic and disposable.** Any address or transaction hash shown for a local run comes from a throwaway chain and regenerates on every run.
 - **Two tests assert POSIX-only file semantics** and fail on Windows (see [Tests](#tests)); both pass on the Linux CI.
 
