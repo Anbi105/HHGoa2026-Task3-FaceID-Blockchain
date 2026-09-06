@@ -8,4 +8,4 @@ solc_version = "0.8.24"
 
 [rpc_endpoints]
 anvil = "http://127.0.0.1:8545"
-amoy = "https://rpc-amoy.polygon.technology"
+amoy = "https://polygon-amoy-bor-rpc.publicnode.com"

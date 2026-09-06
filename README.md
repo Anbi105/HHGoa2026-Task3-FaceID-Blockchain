@@ -295,6 +295,17 @@ make demo-variants SRC=path/to/photo.jpg
 
 ## Stage 3 — blockchain attestation
 
+> [!NOTE]
+> **Live on Polygon Amoy (chain id `80002`).** `EvidenceRegistry` is deployed and one evidence root is anchored.
+>
+> | | |
+> |------|------|
+> | Registry contract | [`0xeE0efb2a3D75f1933f171dE8e8D9Dd14903170d3`](https://amoy.polygonscan.com/address/0xeE0efb2a3D75f1933f171dE8e8D9Dd14903170d3) |
+> | Deployment tx | [`0xdf7bf97cc2e1661efabfe60e1a367440f5e5119a4df1e15c48c425389785be79`](https://amoy.polygonscan.com/tx/0xdf7bf97cc2e1661efabfe60e1a367440f5e5119a4df1e15c48c425389785be79) · block `46888484` |
+> | Anchor tx (id `0`) | [`0x4365d17c38ea8851ca18f62486b4f7471ab1b8023f9078c672e1c4552ab980b8`](https://amoy.polygonscan.com/tx/0x4365d17c38ea8851ca18f62486b4f7471ab1b8023f9078c672e1c4552ab980b8) · block `46888956` |
+> | Anchored root | `0xbd9643d34189af122492472303311cf2bac38066d9c00b98906a91ad69a0d8fc` |
+> | Schema | `faceproof.evidence.v1` — `keccak256` = `0x4db08a5aed7495d51e220b32349500509c6aad15505ad77c9566300ff4f91452` |
+
 Stage 3 consumes the Stage 1 handoff (`probe.json`) and a Stage 2 discovery result, and produces three files under `out/run-<id>/`:
 
 | File | Contents |
@@ -451,7 +462,7 @@ pragma solidity 0.8.24;
 | Network | Chain ID | RPC | Notes |
 |---------|:--------:|-----|-------|
 | **Anvil** (local) | `31337` | `http://127.0.0.1:8545` | default; used by the integration tests and the offline demo |
-| **Polygon Amoy** | `80002` | `https://rpc-amoy.polygon.technology` | proof-of-stake → the POA extra-data middleware is injected automatically |
+| **Polygon Amoy** | `80002` | `https://polygon-amoy-bor-rpc.publicnode.com` | proof-of-stake → the POA extra-data middleware is injected automatically |
 
 - **RPC config** — `CHAIN` selects `anvil` / `amoy`; `RPC_URL` overrides the endpoint; 30-second HTTP timeout.
 - **ABI loading** — strictly from the Foundry build artifact `contracts/out/EvidenceRegistry.sol/EvidenceRegistry.json`. Run `forge build` (or `make deploy`) first; a clear error is raised if the artifact is missing. No hand-maintained ABI.
@@ -459,31 +470,33 @@ pragma solidity 0.8.24;
 - **What goes on chain** — a 32-byte root, a 32-byte schema hash, and a short URI string. Never an embedding, an image, a token, or text.
 
 > [!NOTE]
-> **Amoy support is implemented but not yet fired live.** Anchoring to Amoy needs a funded testnet account; this repository contains **no** deployed Amoy address, transaction, or explorer link. The Anvil path exercises the identical `chain.py` code.
+> **Amoy is live.** `EvidenceRegistry` is deployed at [`0xeE0efb2a3D75f1933f171dE8e8D9Dd14903170d3`](https://amoy.polygonscan.com/address/0xeE0efb2a3D75f1933f171dE8e8D9Dd14903170d3) (deployment tx [`0xdf7bf9…5be79`](https://amoy.polygonscan.com/tx/0xdf7bf97cc2e1661efabfe60e1a367440f5e5119a4df1e15c48c425389785be79), block `46888484`) and anchor id `0` is on chain. The Anvil path exercises the identical `chain.py` code offline.
 
 ### 8 · The transaction receipt
 
 `make anchor` recomputes the root from the bundle, refuses if it disagrees with the stored value or if the fusion verdict is `ABSTAIN`, sends `anchor()`, then writes:
 
 ```jsonc
-// out/run-<id>/receipt.json  — local Anvil (chain id 31337), a throwaway chain:
-// every address / hash regenerates on each run.
+// out/run-<id>/receipt.json  — the real Polygon Amoy anchor (chain id 80002).
 {
   "anchor_id": 0,
-  "chain": "anvil",
-  "chain_id": 31337,
-  "contract": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+  "chain": "amoy",
+  "chain_id": 80002,
+  "contract": "0xeE0efb2a3D75f1933f171dE8e8D9Dd14903170d3",
   "root": "0xbd9643d34189af122492472303311cf2bac38066d9c00b98906a91ad69a0d8fc",
   "schema": "faceproof.evidence.v1",
   "bundle_uri": "",
-  "submitter": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-  "tx_hash": "0x8cb70344706c7016c3f43ed729170785f599a530a551f8e35ff85e9715673b5a",
-  "block_number": 2,
-  "gas_used": 163419,
+  "submitter": "0x0c1536f9F7fbeCE255576CA3C6A4f833e500B5FD",
+  "tx_hash": "0x4365d17c38ea8851ca18f62486b4f7471ab1b8023f9078c672e1c4552ab980b8",
+  "block_number": 46888956,
+  "gas_used": 179379,
   "status": 1,
-  "explorer_url": null
+  "explorer_url": "https://amoy.polygonscan.com/tx/0x4365d17c38ea8851ca18f62486b4f7471ab1b8023f9078c672e1c4552ab980b8"
 }
 ```
+
+> [!NOTE]
+> On a local Anvil run the same file carries `"chain": "anvil"`, `"chain_id": 31337`, `"explorer_url": null`, and a throwaway address / hash that regenerates on every run. Anvil stays the deterministic offline fallback.
 
 ### 9 · Independent re-verification & selective disclosure — `faceproof/verify.py`
 
@@ -656,7 +669,7 @@ With a local node running (`make anvil` in another terminal), `tests/test_chain.
 
 Stage-3-specific constraints (the pipeline's broader limits are in **[LIMITATIONS.md](LIMITATIONS.md)**):
 
-- **No live Polygon Amoy anchor yet.** The Amoy code path is complete and shares `chain.py` with Anvil, but firing it needs a funded testnet account. There is no deployed Amoy address in this repo; the local Anvil path is fully exercised.
+- **Polygon Amoy anchor is live but singular.** `EvidenceRegistry` is deployed at `0xeE0efb2a3D75f1933f171dE8e8D9Dd14903170d3` and exactly one root (anchor id `0`) has been anchored — a demonstration on the synthetic Stage 2 fixture, not a run over real discovery output. The Amoy code path shares `chain.py` with Anvil; the local Anvil path is still what the integration tests exercise on every commit.
 - **The ABI artifact is generated, not committed.** `contracts/out/` is gitignored, so `chain.py` needs `forge build` (or `make deploy`) to run once before any chain operation. Standard for Foundry projects; the Makefile targets and CI handle it.
 - **Stage 3 consumes the discovery result through a read-only adapter.** When no Stage 2 result file is present in the run directory, `stage2_adapter` falls back to a **clearly labelled synthetic fixture** (`source: "synthetic-stub"`, `channels_used: ["channel_a:synthetic-stub"]`) so the attestation path is demonstrable in isolation. It is unmistakable in the manifest and the bundle provenance when no real discovery took place.
 - **Anvil deployment addresses are deterministic and disposable.** Any address or transaction hash shown for a local run comes from a throwaway chain and regenerates on every run.

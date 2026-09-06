@@ -54,7 +54,10 @@ CHAINS: Dict[str, Dict[str, Any]] = {
     },
     "amoy": {
         "chain_id": 80002,
-        "rpc": "https://rpc-amoy.polygon.technology",
+        # publicnode's Bor RPC - the endpoint the live anchor was sent through;
+        # rpc-amoy.polygon.technology had intermittent DNS failures.  Override
+        # with RPC_URL for any other provider.
+        "rpc": "https://polygon-amoy-bor-rpc.publicnode.com",
         "poa": True,
         "explorer": "https://amoy.polygonscan.com",
     },
