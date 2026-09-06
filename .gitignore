@@ -1,8 +1,13 @@
 # ── Biometric and secret data — never commit ────────────────────────
-data/consent/          # consent tokens and per-subject salts
-data/calib/*/          # real subjects' calibration photos
+# (patterns must be on their own line — a trailing "# comment" is treated
+#  as part of the pattern by git, which silently disables the rule)
+# consent tokens and per-subject salts:
+data/consent/
+# real subjects' calibration photos:
+data/calib/*/
 !data/calib/README.md
-out/                   # run artifacts, including raw embeddings
+# run artifacts, including raw embeddings:
+out/
 
 # ── Environment ─────────────────────────────────────────────────────
 .env

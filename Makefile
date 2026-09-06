@@ -6,7 +6,9 @@ IMAGE ?= data/demo/synthetic_face.jpg
 
 .PHONY: help venv install setup test cov fixtures demo-variants \
         consent-grant consent-list consent-revoke probe calibrate \
-        config demo clean-runs
+        config demo clean-runs \
+        banner index-stats search anchor verify tamper abstain forget \
+        deploy anvil forge-test stage3-test
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -70,3 +72,49 @@ demo: ## the full recorded sequence, in order
 
 clean-runs: ## delete out/ (run artifacts, including raw embeddings)
 	rm -rf out
+
+# ── Stage 3 (blockchain attestation) ───────────────────────────────
+# Added by Person 3.  These wrap faceproof.run / Foundry and do not change
+# any Stage 1 target above.
+
+banner: ## Stage 3: print the public pipeline configuration
+	$(PY) -m faceproof.run banner
+
+index-stats: ## Stage 3: print the index snapshot id / stats
+	$(PY) -m faceproof.run index-stats
+
+search: ## Stage 3: Stage 1 handoff -> Stage 2 -> 8-group evidence bundle
+	$(PY) -m faceproof.run search --img $(IMAGE) --subject $(SUBJECT)
+
+anchor: ## Stage 3: anchor the latest run's Merkle root on-chain
+	$(PY) -m faceproof.run anchor
+
+verify: ## Stage 3: independently re-verify the latest run (add CHAIN=1 for on-chain)
+	$(PY) -m faceproof.run verify $(if $(CHAIN),--chain,)
+
+tamper: ## Stage 3: single-character tamper demonstration on the latest run
+	$(PY) -m faceproof.run tamper
+
+abstain: ## Stage 3: show the abstain path (quality-gate rejection -> no bundle)
+	$(PY) -m faceproof.run abstain --subject $(SUBJECT)
+
+forget: ## Stage 3: revoke consent and destroy the erasure salt
+	$(PY) -m faceproof.run forget --subject $(SUBJECT)
+
+anvil: ## Stage 3: start a local Anvil node on :8545
+	anvil
+
+deploy: ## Stage 3: build + deploy EvidenceRegistry to local Anvil
+	forge build --root contracts
+	forge script contracts/script/Deploy.s.sol:DeployScript --root contracts \
+	  --rpc-url http://127.0.0.1:8545 --broadcast \
+	  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+
+forge-test: ## Stage 3: run the Foundry contract test suite
+	forge test --root contracts -vv
+
+stage3-test: ## Stage 3: run only the Stage 3 Python tests
+	$(PY) -m pytest -q tests/test_canonical.py tests/test_merkle.py \
+	  tests/test_bundle.py tests/test_stage2_adapter.py tests/test_verify.py \
+	  tests/test_chain.py tests/test_run.py
+
