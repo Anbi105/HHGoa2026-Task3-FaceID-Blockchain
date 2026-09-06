@@ -47,6 +47,11 @@ contract EvidenceRegistry {
     error ZeroRoot();
     error RootAlreadyAnchored(bytes32 root, uint256 existingId);
     error UnknownAnchor(uint256 id);
+    error BadProofLength(uint256 got, uint256 want);
+
+    /// @dev The evidence bundle is exactly 8 group leaves -> a full tree of
+    ///      depth 3, so every genuine group proof has exactly 3 siblings.
+    uint256 internal constant GROUP_PROOF_LENGTH = 3;
 
     struct Record {
         bytes32 root;
@@ -127,6 +132,9 @@ contract EvidenceRegistry {
      * @notice Verify a selective-disclosure proof: that `leaf` is one of the
      *         eight group leaves committed by anchor `id`'s root.
      * @dev    Pure sorted-pair keccak; identical result to the Python verifier.
+     *         The proof length is pinned to 3 so a shorter path cannot pass an
+     *         internal node (or, at length 0, the root itself) off as a group
+     *         leaf.
      */
     function verifyField(uint256 id, bytes32 leaf, bytes32[] calldata proof)
         external
@@ -134,6 +142,9 @@ contract EvidenceRegistry {
         returns (bool)
     {
         if (id >= _records.length) revert UnknownAnchor(id);
+        if (proof.length != GROUP_PROOF_LENGTH) {
+            revert BadProofLength(proof.length, GROUP_PROOF_LENGTH);
+        }
         return leaf.verify(proof, _records[id].root);
     }
 }

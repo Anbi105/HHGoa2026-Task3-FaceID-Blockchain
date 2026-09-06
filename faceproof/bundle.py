@@ -42,6 +42,12 @@ GROUPS: Tuple[str, ...] = (
     "provenance",       # 7
 )
 
+# Exactly a power of two, so the tree is full and every group proof has this
+# many siblings.  Verifiers pin the audit-path length to this value so a
+# short (or empty) path cannot pass an internal node off as a group leaf.
+TREE_DEPTH = len(GROUPS).bit_length() - 1
+assert 2 ** TREE_DEPTH == len(GROUPS), "GROUPS must be a power of two"
+
 BUNDLE_FILENAME = "bundle.json"
 PROOFS_FILENAME = "proofs.json"
 ABSTAIN_FILENAME = "abstain.json"
@@ -83,14 +89,16 @@ def make_probe_group(commitment: str, model_id: str, det_score: Any, blur_var: A
     }
 
 
-def make_consent_group(subject_ref: str, consent_commitment: str, granted_at: str, scope: str) -> Dict[str, Any]:
+def make_consent_group(consent_commitment: str, granted_at: str, scope: str) -> Dict[str, Any]:
     """1 - consent - commitment to the consent token, grant time, scope.
 
-    ``subject_ref`` is an opaque local reference (Person 1 exposes only the
-    subject commitment); no subject id, no PII.
+    ``consent_commitment`` is Person 1's ``keccak256(consent_token)`` (exposed
+    as ``consent.subject_commitment`` in ``probe.json``); the token is a random
+    UUID4, so this leaf carries no subject id and no PII.  Earlier revisions
+    also stored that same digest a second time under ``subject_ref`` - a
+    duplicate that committed nothing new - so it was removed.
     """
     return {
-        "subject_ref": str(subject_ref),
         "commitment": str(consent_commitment),
         "granted_at": str(granted_at),
         "scope": str(scope),
@@ -188,9 +196,13 @@ def compute_root(groups: Dict[str, Dict[str, Any]]) -> str:
 def build_bundle(groups: Dict[str, Dict[str, Any]], *, schema_id: Optional[str] = None) -> Dict[str, Any]:
     """Assemble the bundle dict (groups + root + metadata) from eight groups.
 
-    The bundle is a pure function of its groups - no wall-clock field - so
-    two hosts given the same Stage 1 / Stage 2 inputs write byte-identical
-    ``bundle.json``.  Timing lives in ``manifest.jsonl`` / ``receipt.json``.
+    ``build_bundle`` itself adds no wall-clock field: given identical groups it
+    returns byte-identical ``bundle.json`` on any host.  Note the groups can
+    still carry time: ``provenance.retrieval_timestamp`` is whatever Stage 2
+    reported (evidence of when discovery ran), and ``assemble_groups`` only
+    falls back to ``_now_z()`` when Stage 2 supplied none - so two runs over
+    the *same* Stage 1 + Stage 2 output, including that timestamp, reproduce
+    the same root.
     """
     return {
         "schema_id": schema_id or cfg.schema_id,
@@ -296,7 +308,6 @@ def assemble_groups(stage1_record: Dict[str, Any], stage2: Dict[str, Any]) -> Di
             blur_var=quality.get("blur_var") or q(0),
         ),
         "consent": make_consent_group(
-            subject_ref=subject_commitment,
             consent_commitment=subject_commitment,
             granted_at=consent.get("granted_at", ""),
             scope=consent.get("scope", cfg.consent_scope),

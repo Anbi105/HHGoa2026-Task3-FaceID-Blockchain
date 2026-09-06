@@ -95,12 +95,27 @@ def proof(layers: List[List[bytes]], index: int) -> List[bytes]:
     return out
 
 
-def verify(leaf_hash: bytes, proof_: List[bytes], root_: bytes) -> bool:
+def verify(
+    leaf_hash: bytes,
+    proof_: List[bytes],
+    root_: bytes,
+    *,
+    expected_len: int | None = None,
+) -> bool:
     """Recompute the root from a leaf + audit path and compare to ``root_``.
 
     Uses the same sorted-pair rule as :func:`_pair`, so this returns exactly
     what the contract's ``verifyField`` returns for the same inputs.
+
+    ``expected_len`` pins the audit-path length.  Without it a *shorter* path
+    verifies an internal node as if it were a leaf (and a zero-length path
+    "verifies" the root itself).  For the fixed-depth 8-group bundle every
+    real group proof has exactly ``TREE_DEPTH`` (3) siblings, so callers that
+    know the schema pass ``expected_len=TREE_DEPTH`` and a wrong-length proof
+    is rejected outright.
     """
+    if expected_len is not None and len(proof_) != expected_len:
+        return False
     computed = leaf_hash
     for sib in proof_:
         computed = _pair(computed, sib)

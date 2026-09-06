@@ -9,9 +9,12 @@ Verification here does **not** trust the bundle.  It:
 5. rebuilds the Merkle tree;
 6. recomputes the root;
 7. compares that root against the stored value **and**, when a receipt is
-   present, against the value returned by the on-chain registry;
+   present and the on-chain check was requested, against the value returned
+   by the on-chain registry (a requested check that cannot run counts as a
+   FAILURE, not a skip);
 8. verifies a selective-disclosure proof for ``match_location`` - both the
-   proof stored in ``proofs.json`` and one regenerated from scratch;
+   proof stored in ``proofs.json`` and one regenerated from scratch - each
+   against the **anchored** root, so tampering with any group breaks it;
 9. prints a single pass/fail verdict.
 
 :func:`tamper_demonstration` flips exactly one character in
@@ -33,6 +36,7 @@ from faceproof.bundle import (
     BUNDLE_FILENAME,
     GROUPS,
     PROOFS_FILENAME,
+    TREE_DEPTH,
     canonical_leaves,
     recompute_root,
 )
@@ -58,19 +62,34 @@ def verify_bundle_locally(
     stored_root = bundle.get("merkle_root")
     root_match = bool(stored_root) and derived_root.lower() == str(stored_root).lower()
 
-    # step 8: selective disclosure of match_location, proof regenerated here
-    fresh_path = merkle_proof(layers, _LOCATION_INDEX)
-    fresh_ok = verify(leaves[_LOCATION_INDEX], fresh_path, merkle_root(layers))
+    # Step 8 - selective disclosure of match_location.  Both proofs are checked
+    # against the ANCHORED root (bundle['merkle_root']), never against a root
+    # recomputed from these groups: a proof freshly generated from `layers` and
+    # checked against `root(layers)` can never fail, and the stored proof
+    # checked against `derived_root` moves with the tampered bundle.  Verifying
+    # against the anchored root means either check fails the moment any group
+    # (this one or another) is altered.
+    anchored: Optional[bytes] = None
+    if stored_root:
+        try:
+            anchored = unhex(stored_root)
+        except (ValueError, TypeError):
+            anchored = None
 
-    # ... and the proof that shipped in proofs.json, if any
-    stored_ok = None
-    if proofs and "groups" in proofs and "match_location" in proofs["groups"]:
-        entry = proofs["groups"]["match_location"]
-        stored_ok = verify(
-            leaves[_LOCATION_INDEX],
-            [unhex(p) for p in entry["proof"]],
-            unhex(derived_root),
+    loc_leaf = leaves[_LOCATION_INDEX]
+    fresh_ok: Optional[bool] = None
+    stored_ok: Optional[bool] = None
+    if anchored is not None:
+        fresh_ok = verify(
+            loc_leaf, merkle_proof(layers, _LOCATION_INDEX), anchored,
+            expected_len=TREE_DEPTH,
         )
+        if proofs and "groups" in proofs and "match_location" in proofs["groups"]:
+            entry = proofs["groups"]["match_location"]
+            stored_ok = verify(
+                loc_leaf, [unhex(p) for p in entry["proof"]], anchored,
+                expected_len=TREE_DEPTH,
+            )
 
     return {
         "derived_root": derived_root,
@@ -79,7 +98,9 @@ def verify_bundle_locally(
         "leaves": [hexstr(x) for x in leaves],
         "selective_disclosure_regenerated": fresh_ok,
         "selective_disclosure_stored_proof": stored_ok,
-        "selective_disclosure_pass": bool(fresh_ok and (stored_ok in (None, True))),
+        "selective_disclosure_pass": bool(
+            root_match and fresh_ok is True and (stored_ok in (None, True))
+        ),
     }
 
 
@@ -94,17 +115,24 @@ def _load(run_dir: Path | str) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]
 
 
 def _check_chain(bundle, proofs, receipt, local) -> Dict[str, Optional[bool]]:  # pragma: no cover - needs a live chain (see tests/test_chain.py + Foundry suite)
-    """Compare the recomputed root and a field proof against the on-chain record."""
-    from faceproof.chain import get_record, get_w3, id_of, rpc_url, verify_field
+    """Compare the recomputed root and a field proof against the on-chain record.
+
+    Raises on any condition that means the on-chain check could not be run
+    (unknown chain, unreachable RPC, missing contract) - the caller turns that
+    into a verification FAILURE, never a silent pass.
+    """
+    from faceproof.chain import CHAINS, get_record, get_w3, id_of, rpc_url, verify_field
 
     out: Dict[str, Optional[bool]] = {"chain_root_match": None, "chain_verify_field": None}
     addr = receipt.get("contract")
     if not addr:
-        return out
-    w3 = get_w3(rpc_url(receipt.get("chain")))
+        raise ValueError("receipt has no contract address")
+    name = receipt.get("chain")
+    if name not in CHAINS:
+        raise ValueError(f"receipt names an unknown chain: {name!r}")
+    w3 = get_w3(rpc_url(name), name=name)
     if not w3.is_connected():
-        console.print("[yellow]chain check skipped: RPC not reachable[/yellow]")
-        return out
+        raise ConnectionError(f"cannot reach {name} RPC")
 
     anchor_id = receipt.get("anchor_id")
     if anchor_id is None:
@@ -131,11 +159,17 @@ def verify_run(run_dir: Path | str, *, check_chain: bool = True) -> bool:
     local = verify_bundle_locally(bundle, proofs)
 
     chain: Dict[str, Optional[bool]] = {"chain_root_match": None, "chain_verify_field": None}
-    if check_chain and receipt:
+    chain_error: Optional[str] = None
+    # Only "want" the chain check when it was asked for AND there is a receipt
+    # with a contract to check against.  A wanted-but-failed check is a FAIL,
+    # not a skip that silently passes.
+    want_chain = bool(check_chain and receipt and receipt.get("contract"))
+    if want_chain:
         try:
             chain = _check_chain(bundle, proofs, receipt, local)
         except Exception as exc:  # pragma: no cover - network variance
-            console.print(f"[yellow]chain check skipped: {exc}[/yellow]")
+            chain_error = str(exc)
+            console.print(f"[bold red]on-chain check FAILED: {exc}[/bold red]")
 
     table = Table(title="Stage 3 - independent re-verification", title_style="bold cyan")
     table.add_column("check")
@@ -146,20 +180,28 @@ def verify_run(run_dir: Path | str, *, check_chain: bool = True) -> bool:
         mark = "-" if ok is None else ("[green]PASS[/green]" if ok else "[red]FAIL[/red]")
         table.add_row(name, val, mark)
 
+    def chain_cell(v: Optional[bool]) -> Optional[bool]:
+        if not want_chain:
+            return None            # not requested -> not scored
+        if chain_error is not None:
+            return False
+        return v is True
+
     row("recomputed root", local["derived_root"][:18] + "...", None)
     row("== stored root", str(local["stored_root"])[:18] + "...", local["root_match"])
     row("selective disclosure (regenerated proof)", "match_location", local["selective_disclosure_regenerated"])
     row("selective disclosure (proofs.json)", "match_location", local["selective_disclosure_stored_proof"])
-    row("== on-chain root", "EvidenceRegistry.get()", chain["chain_root_match"])
-    row("on-chain verifyField()", "match_location", chain["chain_verify_field"])
+    row("== on-chain root", "EvidenceRegistry.get()", chain_cell(chain["chain_root_match"]))
+    row("on-chain verifyField()", "match_location", chain_cell(chain["chain_verify_field"]))
     console.print(table)
 
-    checks = [
-        local["root_match"],
-        local["selective_disclosure_pass"],
-        chain["chain_root_match"] in (None, True),
-        chain["chain_verify_field"] in (None, True),
-    ]
+    checks = [local["root_match"], local["selective_disclosure_pass"]]
+    if want_chain:
+        checks.append(
+            chain_error is None
+            and chain["chain_root_match"] is True
+            and chain["chain_verify_field"] is True
+        )
     ok = all(checks)
     console.print(
         Panel(

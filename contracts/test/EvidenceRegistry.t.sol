@@ -197,4 +197,58 @@ contract EvidenceRegistryTest {
         badProof[2] = l2[1];
         require(!registry.verifyField(id, leaves[2], badProof), "tampered proof");
     }
+
+    /// A proof shorter than the tree depth must be rejected outright — otherwise
+    /// an internal node (here l2[1], a depth-1 node) passes as if it were a
+    /// group leaf, and a zero-length proof "verifies" the root itself.
+    function testVerifyFieldRejectsWrongProofLength() public {
+        bytes32[8] memory leaves;
+        for (uint256 i = 0; i < 8; ++i) {
+            leaves[i] = keccak256(
+                abi.encodePacked(keccak256(abi.encodePacked("group", i)))
+            );
+        }
+        bytes32[4] memory l1;
+        for (uint256 i = 0; i < 4; ++i) {
+            l1[i] = _hashPair(leaves[2 * i], leaves[2 * i + 1]);
+        }
+        bytes32 l2a = _hashPair(l1[0], l1[1]);
+        bytes32 l2b = _hashPair(l1[2], l1[3]);
+        bytes32 root = _hashPair(l2a, l2b);
+        uint256 id = registry.anchor(root, SCHEMA, URI_1);
+
+        // 1-element "proof" that would recompute the root from an internal node
+        bytes32[] memory shortProof = new bytes32[](1);
+        shortProof[0] = l2a;
+        try registry.verifyField(id, l2b, shortProof) {
+            revert("expected BadProofLength (len 1)");
+        } catch (bytes memory err) {
+            require(
+                bytes4(err) == EvidenceRegistry.BadProofLength.selector,
+                "len 1 selector"
+            );
+        }
+
+        // zero-length "proof" against the root itself
+        bytes32[] memory emptyProof = new bytes32[](0);
+        try registry.verifyField(id, root, emptyProof) {
+            revert("expected BadProofLength (len 0)");
+        } catch (bytes memory err) {
+            require(
+                bytes4(err) == EvidenceRegistry.BadProofLength.selector,
+                "len 0 selector"
+            );
+        }
+
+        // over-long proof
+        bytes32[] memory longProof = new bytes32[](4);
+        try registry.verifyField(id, leaves[2], longProof) {
+            revert("expected BadProofLength (len 4)");
+        } catch (bytes memory err) {
+            require(
+                bytes4(err) == EvidenceRegistry.BadProofLength.selector,
+                "len 4 selector"
+            );
+        }
+    }
 }

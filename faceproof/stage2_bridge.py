@@ -287,7 +287,22 @@ def run_stage2(run_dir: Path | str, *, write: bool = True) -> Dict[str, Any]:
             _write(run_path, payload)
         return payload
 
-    winner = (channel_a.get("hits") or [{}])[0]
+    # The winning record must come from the channel that actually won - not
+    # channel A's (possibly empty) hits regardless of outcome.  If the winning
+    # channel produced no locatable record, refuse to emit a positive match
+    # with an empty body: downgrade to ABSTAIN.
+    winner = _winner_for(outcome, channel_a, channel_b)
+    if not (winner.get("post_url") or winner.get("post_uri")):
+        payload = _abstain_payload(
+            reason=f"{outcome.lower()}_without_locatable_match",
+            channels=channels_used,
+            snapshot_id=snap.get("snapshot_id", ""),
+        )
+        if write:
+            _write(run_path, payload)
+        log("STAGE 2", "bridge", outcome="ABSTAIN", reason=payload["reason"])
+        return payload
+
     payload: Dict[str, Any] = {
         "schema_id": STAGE2_SCHEMA_ID,
         "source": "person2-bridge",
@@ -303,6 +318,21 @@ def run_stage2(run_dir: Path | str, *, write: bool = True) -> Dict[str, Any]:
     if write:
         _write(run_path, payload)
     return payload
+
+
+def _winner_for(outcome: str, a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    """The match record from whichever channel the fusion outcome credits.
+
+    ``SINGLE_CHANNEL_B`` takes channel B's record (Person 2's ``fuse`` also
+    nests it under ``"b"``); everything else takes channel A's top hit.
+    """
+    if outcome == "SINGLE_CHANNEL_B":
+        for cand in (b, b.get("b") if isinstance(b, dict) else None,
+                     b.get("match") if isinstance(b, dict) else None):
+            if isinstance(cand, dict) and (cand.get("post_url") or cand.get("post_uri")):
+                return cand
+        return {}
+    return (a.get("hits") or [{}])[0]
 
 
 def _channels_used(outcome: str, a: Dict[str, Any], b: Dict[str, Any]) -> List[str]:

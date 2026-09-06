@@ -74,8 +74,9 @@ def test_probe_and_consent_are_verbatim_from_stage1():
     groups = assemble_groups(stage1_record(), stage2_result())
     # the salted commitment is consumed, never recomputed, never a fresh salt
     assert groups["probe"]["commitment"] == PROBE_COMMITMENT
+    # consent leaf carries keccak256(consent_token) exactly once, as `commitment`
     assert groups["consent"]["commitment"] == SUBJECT_COMMITMENT
-    assert groups["consent"]["subject_ref"] == SUBJECT_COMMITMENT
+    assert "subject_ref" not in groups["consent"]
     # no raw biometric material anywhere
     blob = canon(groups).decode()
     assert "embedding" not in blob and "salt" not in blob

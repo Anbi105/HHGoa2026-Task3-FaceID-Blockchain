@@ -93,7 +93,9 @@ def normalize(raw: Dict[str, Any], *, source: str) -> Dict[str, Any]:
             or (raw.get("snapshot") or {}).get("snapshot_id", "")
         ),
         "retrieval_timestamp": str(
-            _first_present(raw, "retrieval_timestamp", "accept_at", "retrieved_at",
+            # NB: never fall back to ``accept_at`` here - in this codebase that
+            # key is a cosine score threshold (~0.55), not a time.
+            _first_present(raw, "retrieval_timestamp", "retrieved_at", "retrievedAt",
                            default=_now_z())
         ),
         "pipeline_version": str(

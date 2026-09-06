@@ -187,18 +187,24 @@ def cmd_search(args: argparse.Namespace) -> int:
     manifest.log("STAGE 3", "merkle_root", root=root)
     console.print(f"[green]bundle assembled - 8 groups[/green]  root={root}")
 
+    anchor_ok: Optional[bool] = None
     if args.anchor:
         from faceproof.anchor import anchor as _anchor
 
         try:
             _anchor(run_dir)
+            anchor_ok = True
         except Exception as exc:
-            console.print(f"[yellow]anchor skipped: {exc}[/yellow]")
+            anchor_ok = False
+            console.print(f"[bold red]anchor FAILED: {exc}[/bold red]")
 
-    verify_run(run_dir, check_chain=args.anchor)
+    verified = verify_run(run_dir, check_chain=bool(args.anchor and anchor_ok))
     if not args.no_tamper:
         tamper_demonstration(run_dir)
-    return 0
+
+    if args.anchor and not anchor_ok:
+        return 1
+    return 0 if verified else 1
 
 
 def cmd_anchor(args: argparse.Namespace) -> int:

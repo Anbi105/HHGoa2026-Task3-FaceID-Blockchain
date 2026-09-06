@@ -90,6 +90,14 @@ def anchor(
         bundle_uri=bundle_uri,
     )
 
+    if int(res.get("status", 0)) != 1:
+        # A reverted transaction is still mined; do not write receipt.json or
+        # claim an anchor for it.
+        raise RuntimeError(
+            f"anchor transaction did not succeed (status={res.get('status')!r}); "
+            f"tx={res.get('tx_hash')} block={res.get('block_number')} — no receipt written"
+        )
+
     explorer = CHAINS.get(name, {}).get("explorer")
     tx_hash = res["tx_hash"] if res["tx_hash"].startswith("0x") else "0x" + res["tx_hash"]
 
