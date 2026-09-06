@@ -22,7 +22,7 @@ Face  →  Social Match  →  On-Chain Attestation
 | Stage | Owner | Branch | In this repo |
 |---|---|---|---|
 | 1 — Face Probe | Person 1 | `person-1/stage-1-probe` | `faceproof/{config,manifest,face,consent,handoff,calibrate,cli}.py` (verbatim) |
-| 2 — Social Discovery | Person 2 | `person2` | `files-mentioned-by-the-user-hhgoa/faceproof/…` (merged) + `faceproof/stage2_bridge.py` (adapter) |
+| 2 — Social Discovery | Person 2 | `person2` | `vendor/stage2/…` (vendored) + `faceproof/stage2_bridge.py` (adapter) |
 | 3 — Blockchain Attestation | Person 3 | `person3-blockchain` | `faceproof/{canonical,merkle,bundle,stage2_adapter,chain,anchor,verify,run}.py`, `contracts/` |
 
 ## Stage 1 — Face Probe
@@ -56,9 +56,18 @@ Responsibilities, as implemented by Person 1:
 
 Person 2's Stage 2 is a corpus/index search over public social content. It is
 reached through a thin adapter, `faceproof/stage2_bridge.py`, which loads
-Person 2's **real** `fuse.py`, `channel_b.py` and `index.py` by file path
-(their package is also named `faceproof`, so it is never placed on the import
-path) and never modifies them.
+Person 2's `fuse.py`, `channel_b.py` and `index.py` from `vendor/stage2/` by
+file path (their package is also named `faceproof`, so it is never placed on
+the import path) and never modifies them.
+
+Be precise about what that vendored tree contains: `fuse.fuse` is complete and
+is used as-is; `index.search` is complete and is genuine FAISS retrieval; but
+`channel_b.discover` is a **three-line stub** that always returns
+`{"accepted": False}` (reverse-image search is not implemented on the `person2`
+branch, so `SINGLE_CHANNEL_B` is unreachable through the bridge today), and
+`index.build` is not reachable through the seam at all — it uses a relative
+`from .face import probe_image` that cannot resolve under path-loading, so
+corpus building still runs on Person 2's own tree.
 
 Entry: `python -m faceproof.run stage2 --run-dir out/run-<id>`
 (or `search … --real-stage2`).
@@ -217,7 +226,7 @@ stages through their serialized interfaces — **not** by merging code.
 - **Two file-based seams**, unchanged from each owner's design:
   `probe.json` (Stage 1 → Stage 2) and `stage2.json` (Stage 2 → Stage 3).
 - **Stage 2 is reached through an adapter, not a rewrite.** Person 2's branch
-  is merged into this repo under `files-mentioned-by-the-user-hhgoa/` (Person 2
+  is vendored into this repo under `vendor/stage2/` (Person 2
   nested their whole tree there). Their package is *also* named `faceproof`
   with the same module names but an older, incompatible implementation, so it
   cannot be imported alongside the root package. `faceproof/stage2_bridge.py`

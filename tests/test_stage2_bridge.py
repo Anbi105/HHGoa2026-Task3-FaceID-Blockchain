@@ -103,3 +103,79 @@ def test_match_path_runs_real_fuse_and_hashes_text(tmp_path, monkeypatch):
 def test_index_stats_none_without_index(tmp_path, monkeypatch):
     monkeypatch.setattr(sb, "_index_dir", lambda: tmp_path / "nope")
     assert sb.index_stats() is None
+
+
+# --------------------------------------------------------------------------- #
+# Channel A plumbing: every degraded path returns a not-accepted result and
+# never fabricates hits.  (audit #5 / re-audit robustness)
+# --------------------------------------------------------------------------- #
+
+class _FakeIndex:
+    """Stands in for Person 2's index module."""
+
+    def __init__(self, result=None, raises=None):
+        self._result, self._raises = result, raises
+
+    def search(self, embedding, config, out_dir=None):
+        if self._raises:
+            raise self._raises
+        return self._result
+
+
+def test_channel_a_without_an_index_does_not_fabricate(monkeypatch):
+    monkeypatch.setattr(sb, "_index_present", lambda: False)
+    out = sb._run_channel_a(_FakeIndex(), None, log=lambda *a, **k: None)
+    assert out["accepted"] is False
+    assert out["reason"] == "no_local_index"
+    assert out["hits"] == []
+
+
+def test_channel_a_reports_a_corrupt_index_instead_of_crashing(monkeypatch):
+    monkeypatch.setattr(sb, "_index_present", lambda: True)
+    idx = _FakeIndex(raises=RuntimeError("faiss.bin truncated"))
+    out = sb._run_channel_a(idx, None, log=lambda *a, **k: None)
+    assert out["accepted"] is False
+    assert out["reason"] == "index_error"
+    assert out["hits"] == []
+
+
+def test_channel_a_surfaces_the_top_hit_fields(monkeypatch):
+    monkeypatch.setattr(sb, "_index_present", lambda: True)
+    hit = {"post_uri": "at://x/1", "post_url": "https://bsky.app/p/1", "score": 0.9}
+    idx = _FakeIndex(result={
+        "accepted": True, "reason": "accepted", "hits": [hit],
+        "margin": 0.31, "snapshot": {"snapshot_id": "snap-xyz", "n_faces": 12},
+    })
+    out = sb._run_channel_a(idx, None, log=lambda *a, **k: None)
+    assert out["accepted"] is True
+    assert out["post_url"] == "https://bsky.app/p/1"   # mirrors channel_a.discover
+    assert out["snapshot"]["snapshot_id"] == "snap-xyz"
+
+
+def test_index_stats_reads_the_snapshot(tmp_path, monkeypatch):
+    idx = tmp_path / "index"; idx.mkdir()
+    (idx / "snapshot.json").write_text(
+        json.dumps({"snapshot_id": "abc", "n_faces": 7}), encoding="utf-8"
+    )
+    monkeypatch.setattr(sb, "_index_dir", lambda: idx)
+    assert sb.index_stats()["n_faces"] == 7
+
+
+def test_missing_person2_package_is_reported_clearly(monkeypatch, tmp_path):
+    monkeypatch.setattr(sb, "_REPO_ROOT", tmp_path)
+    with pytest.raises(sb.Stage2Unavailable, match="was not found"):
+        sb._p2_pkg_dir()
+
+
+def test_winner_for_single_channel_b_without_a_record_is_empty():
+    assert sb._winner_for("SINGLE_CHANNEL_B", {"hits": []}, {"accepted": True}) == {}
+
+
+def test_winner_for_single_channel_b_finds_a_nested_record():
+    b = {"accepted": True, "b": {"post_url": "https://x/y"}}
+    assert sb._winner_for("SINGLE_CHANNEL_B", {"hits": []}, b)["post_url"] == "https://x/y"
+
+
+def test_channels_used_labels_corroboration():
+    assert sb._channels_used("CORROBORATED", {}, {}) == ["channel_a", "channel_b"]
+    assert sb._channels_used("SINGLE_CHANNEL_B", {}, {}) == ["channel_b"]

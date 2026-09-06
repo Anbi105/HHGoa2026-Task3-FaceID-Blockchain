@@ -104,11 +104,18 @@ forget: ## Stage 3: revoke consent and destroy the erasure salt
 anvil: ## Stage 3: start a local Anvil node on :8545
 	anvil
 
-deploy: ## Stage 3: build + deploy EvidenceRegistry to local Anvil
+# The key reaches forge through ETH_PRIVATE_KEY, never argv: a --private-key
+# on the command line is readable by every local process via `ps` and lands in
+# shell history.  ANVIL_KEY is the world-known Anvil dev account 0.
+# Real chain:  make deploy RPC=https://... KEY=$$PRIVATE_KEY
+ANVIL_KEY ?= 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+RPC       ?= http://127.0.0.1:8545
+KEY       ?= $(ANVIL_KEY)
+
+deploy: ## Stage 3: build + deploy EvidenceRegistry (RPC=… KEY=… to override)
 	forge build --root contracts
-	forge script contracts/script/Deploy.s.sol:DeployScript --root contracts \
-	  --rpc-url http://127.0.0.1:8545 --broadcast \
-	  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+	ETH_PRIVATE_KEY=$(KEY) forge script contracts/script/Deploy.s.sol:DeployScript \
+	  --root contracts --rpc-url $(RPC) --broadcast
 
 forge-test: ## Stage 3: run the Foundry contract test suite
 	forge test --root contracts -vv

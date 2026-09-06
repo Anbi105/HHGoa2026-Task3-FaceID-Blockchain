@@ -37,7 +37,7 @@ Only cryptographic commitments are anchored. Withdraw consent and every past com
 | Stage | What it does |
 |:-----:|--------------|
 | **1 of 3 — Face Identity / Probe** | Detect a face, apply the quality gate (detector confidence, face size, blur, multi-face ambiguity), encode to a 512-d L2-normalised vector, bind it to a consent grant, and write the handoff record. Modules: `config` `manifest` `face` `consent` `handoff` `calibrate` `cli`. |
-| **2 of 3 — Evidence Discovery / Matching** | Search the probe against a self-built public-post face index (Channel A) and reverse-image search (Channel B), re-score every candidate locally, and fuse the channels into `corroborated`, `single_channel_{a,b}`, or `abstain`. Owned by Person 2 (branch `person2`, merged under `files-mentioned-by-the-user-hhgoa/`); reached from the root pipeline through `faceproof/stage2_bridge.py`, which runs Person 2's real `fuse` / `channel_b` / `index.search` and writes `stage2.json`. |
+| **2 of 3 — Evidence Discovery / Matching** | Search the probe against a self-built public-post face index (Channel A) and reverse-image search (Channel B), re-score every candidate locally, and fuse the channels into `corroborated`, `single_channel_{a,b}`, or `abstain`. Owned by Person 2 (branch `person2`, vendored under `vendor/stage2/`); reached from the root pipeline through `faceproof/stage2_bridge.py`, which runs Person 2's `fuse` / `channel_b` / `index.search` and writes `stage2.json`. |
 | **3 of 3 — Blockchain Attestation** | Canonicalise the accepted evidence into eight field groups, commit each to a keccak256 Merkle leaf, build the root, anchor it on chain, then independently re-verify, prove selective disclosure, and demonstrate tamper detection. Modules: `canonical` `merkle` `bundle` `stage2_adapter` `chain` `anchor` `verify` `run` + `contracts/`. |
 
 Stage 3 takes the evidence the earlier stages produced and turns it into a **reproducible, tamper-evident cryptographic attestation**: eight canonical evidence groups → eight Merkle leaves → one root → one on-chain record. Anyone can later recompute the root from the bundle and check it against the chain.
@@ -665,7 +665,7 @@ With a local node running (`make anvil` in another terminal), `tests/test_chain.
 │   ├── test/EvidenceRegistry.t.sol 9 Foundry tests                          [Stage 3]
 │   ├── script/Deploy.s.sol         deploy script                            [Stage 3]
 │   └── foundry.toml                solc 0.8.24                              [Stage 3]
-├── files-mentioned-by-the-user-hhgoa/   Person 2's Stage 2 branch, merged   [Stage 2]
+├── vendor/stage2/          Person 2's Stage 2 branch, vendored             [Stage 2]
 ├── tests/                  Stage 1 + Stage 3 + test_stage2_bridge, fully mocked
 ├── application.md          the integrated three-stage architecture
 ├── scripts/                fixture + artwork generators, self-verifying

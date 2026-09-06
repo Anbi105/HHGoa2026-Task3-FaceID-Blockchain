@@ -69,17 +69,40 @@ CHAINS: Dict[str, Dict[str, Any]] = {
 # ---------------------------------------------------------------------------
 
 
+class UnknownChainError(ValueError):
+    """``CHAIN`` names a network this build does not know about."""
+
+
 def chain_name() -> str:
-    name = os.environ.get("CHAIN") or os.environ.get("FACEPROOF_CHAIN") or "anvil"
-    name = name.strip().lower()
-    return name if name in CHAINS else "anvil"
+    """The selected chain, or ``anvil`` when nothing is configured.
+
+    An *unset* ``CHAIN`` defaults to the local node.  An unrecognised one
+    raises: silently falling back to ``anvil`` meant a typo (``CHAIN=polygon``)
+    anchored to localhost while the operator believed they were on a testnet.
+    """
+    raw = os.environ.get("CHAIN") or os.environ.get("FACEPROOF_CHAIN")
+    if not raw or not raw.strip():
+        return "anvil"
+    name = raw.strip().lower()
+    if name not in CHAINS:
+        raise UnknownChainError(
+            f"CHAIN={raw.strip()!r} is not a known network; "
+            f"expected one of {', '.join(sorted(CHAINS))}"
+        )
+    return name
 
 
 def rpc_url(name: Optional[str] = None) -> str:
     env = os.environ.get("RPC_URL") or os.environ.get("FACEPROOF_RPC_URL")
     if env:
         return env.strip()
-    return CHAINS[name or chain_name()]["rpc"]
+    key = name or chain_name()
+    if key not in CHAINS:
+        raise UnknownChainError(
+            f"no RPC default for unknown chain {key!r}; "
+            f"expected one of {', '.join(sorted(CHAINS))}"
+        )
+    return CHAINS[key]["rpc"]
 
 
 def registry_address() -> str:
@@ -165,19 +188,35 @@ def to_bytes32(value: Union[str, bytes]) -> bytes:
     * ``0x`` + 64 hex -> decoded
     * any other string (e.g. a schema id like ``faceproof.evidence.v1``)
       -> ``keccak256(utf-8 bytes)``
+
+    A string that *looks* like a digest but is not valid hex is rejected
+    rather than hashed.  The old behaviour silently turned a Merkle root with
+    one mistyped character into a different, entirely valid-looking
+    ``bytes32`` - a corruption that only surfaces as an unexplained
+    verification failure much later.
     """
     if isinstance(value, (bytes, bytearray)):
         b = bytes(value)
         if len(b) != 32:
             raise ValueError(f"expected 32 bytes, got {len(b)}")
         return b
+
     s = value.strip()
-    hexpart = s[2:] if s.startswith("0x") else s
-    if len(hexpart) == 64:
+    prefixed = s.startswith("0x") or s.startswith("0X")
+    hexpart = s[2:] if prefixed else s
+
+    if prefixed or len(hexpart) == 64:
+        # The caller meant a digest.  Anything that is not exactly 32 bytes of
+        # hex is an error, never a keccak fallback.
+        if len(hexpart) != 64:
+            raise ValueError(
+                f"expected a 32-byte hex digest (64 hex chars), got {len(hexpart)}: {s!r}"
+            )
         try:
             return bytes.fromhex(hexpart)
-        except ValueError:
-            pass
+        except ValueError as exc:
+            raise ValueError(f"not a valid hex digest: {s!r}") from exc
+
     return keccak(text=s)
 
 
@@ -222,6 +261,21 @@ def anchor_root(
         tx_hash, timeout=RECEIPT_TIMEOUT_SECONDS
     )
 
+    def _hex(h) -> str:
+        return h.hex() if hasattr(h, "hex") else str(h)
+
+    # A reverted transaction is still mined and still returns a receipt.  Fail
+    # here, at the source, before anything downstream can treat it as an
+    # anchor - and before the idOf fallback below, which would otherwise
+    # revert with an opaque UnknownAnchor for a root that was never written.
+    status = int(receipt.get("status", 1))
+    if status != 1:
+        raise RuntimeError(
+            f"anchor transaction reverted (status={status}); "
+            f"tx=0x{_hex(receipt['transactionHash']).lstrip('0x')} "
+            f"block={int(receipt['blockNumber'])}"
+        )
+
     anchor_id: Optional[int] = None
     try:
         events = contract.events.Anchored().process_receipt(receipt)
@@ -230,6 +284,15 @@ def anchor_root(
     except Exception:  # pragma: no cover - fall back to a view call
         pass
     if anchor_id is None:
+        # `idOf` reverts UnknownAnchor for a root that was never anchored, so
+        # asking it blind turns a recovery path into a second failure.  Check
+        # membership first and report something actionable if it is absent.
+        if not bool(contract.functions.isAnchored(root_b).call()):
+            raise RuntimeError(
+                "transaction succeeded but the root is not in the registry - "
+                f"contract {address} may not be an EvidenceRegistry, or its ABI "
+                "is stale (re-run `forge build`)"
+            )
         anchor_id = int(contract.functions.idOf(root_b).call())
 
     return {

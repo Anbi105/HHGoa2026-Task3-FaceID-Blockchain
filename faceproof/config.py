@@ -24,6 +24,22 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 # Field names whose values must never be printed or written to the manifest.
 _SECRET_FIELDS: tuple[str, ...] = ("serpapi_key", "private_key")
 
+# Secrets Stage 3 reads straight from the environment rather than from this
+# dataclass (see faceproof/chain.py).  `public()` reports presence only.
+_ENV_SECRET_VARS: tuple[str, ...] = ("PRIVATE_KEY", "SERPAPI_KEY")
+
+
+def _display_path(p: Path) -> str:
+    """Repo-relative when the path is inside the repo, absolute otherwise.
+
+    `public()` is copied into probe.json; an absolute path there leaks the
+    operator's home directory into an artifact meant to be shown on camera.
+    """
+    try:
+        return str(p.resolve().relative_to(_REPO_ROOT)).replace("\\", "/")
+    except (ValueError, OSError):
+        return str(p)
+
 
 def _env(key: str, default: str) -> str:
     return os.environ.get(f"FACEPROOF_{key}", default)
@@ -100,15 +116,32 @@ class Config:
 
     # ── Presentation ────────────────────────────────────────────────
     def public(self) -> Dict[str, Any]:
-        """Config minus secrets — safe to print and to commit to the manifest."""
+        """Config minus secrets — safe to print and to commit to the manifest.
+
+        Two things are deliberately not the raw dataclass dump:
+
+        * ``_SECRET_FIELDS`` are masked if they are ever added as real fields
+          (see ``TestPublic.test_masks_secret_fields``);
+        * Stage 3 keeps its secrets in the environment rather than on this
+          dataclass, so that masking alone would report nothing about them.
+          ``env_secrets`` closes that gap — presence only, never a value.
+
+        Paths are rendered relative to the repo root where possible: this dict
+        is copied verbatim into ``probe.json``, and an absolute path leaks the
+        operator's home directory into an artifact meant to be shown.
+        """
         d: Dict[str, Any] = {}
         for k, v in asdict(self).items():
             if k in _SECRET_FIELDS:
                 d[k] = "<set>" if v else "<unset>"
             elif isinstance(v, Path):
-                d[k] = str(v)
+                d[k] = _display_path(v)
             else:
                 d[k] = v
+        d["env_secrets"] = {
+            name.lower(): "<set>" if os.environ.get(name) else "<unset>"
+            for name in _ENV_SECRET_VARS
+        }
         return d
 
 

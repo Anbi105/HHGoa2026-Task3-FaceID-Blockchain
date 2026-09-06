@@ -325,7 +325,7 @@ def print_result(result: CalibrationResult) -> None:
 def write_json(result: CalibrationResult, path: Path | str) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(result.to_json(), indent=2) + "\n")
+    path.write_text(json.dumps(result.to_json(), indent=2) + "\n", encoding="utf-8")
     console.print(f"\n[green]Wrote[/green] {path}")
     return path
 

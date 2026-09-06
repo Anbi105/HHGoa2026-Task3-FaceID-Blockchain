@@ -77,6 +77,16 @@ contract EvidenceRegistry {
     /**
      * @notice Append a new evidence root. Idempotency is by root: a root can be
      *         anchored exactly once, by anyone, forever.
+     * @dev    Deliberately permissionless — but note what that does and does
+     *         not give you. A root is a deterministic function of its bundle,
+     *         so anyone who sees a bundle before it is anchored can anchor
+     *         that root first; the honest submitter's transaction then reverts
+     *         `RootAlreadyAnchored` and `submitter` records the front-runner.
+     *         Nothing is forged (the evidence is unchanged and still verifies)
+     *         but **first-anchor is not proof of authorship**. Binding
+     *         authorship would require a signature over the root from a key
+     *         committed inside the bundle; that is out of scope here and is
+     *         documented in LIMITATIONS.md §16.
      * @param root      keccak Merkle root of the eight evidence groups.
      * @param schema    32-byte schema identifier (keccak of the schema string).
      * @param bundleURI Off-chain location of the full bundle (may be empty).

@@ -2,7 +2,14 @@
 
 import json
 
-from faceproof.stage2_adapter import OUTCOMES, load_stage2, normalize
+import pytest
+
+from faceproof.stage2_adapter import (
+    OUTCOMES,
+    Stage2ResultMissing,
+    load_stage2,
+    normalize,
+)
 
 
 def test_normalize_hashes_and_drops_raw_text():
@@ -50,8 +57,20 @@ def test_load_prefers_person2_file(tmp_path):
     assert out["fusion_outcome"] == "CORROBORATED"
 
 
-def test_load_falls_back_to_labelled_stub(tmp_path):
-    out = load_stage2(tmp_path)
+def test_load_without_stage2_file_refuses_by_default(tmp_path):
+    """The stub is a positive, anchorable match — reaching it must be a choice.
+
+    Before this was gated, an empty run directory silently produced a
+    fabricated `SINGLE_CHANNEL_A` result that Stage 3 would happily bundle
+    and anchor.
+    """
+    with pytest.raises(Stage2ResultMissing) as exc:
+        load_stage2(tmp_path)
+    assert "--demo" in str(exc.value)
+
+
+def test_load_falls_back_to_labelled_stub_when_asked(tmp_path):
+    out = load_stage2(tmp_path, allow_synthetic=True)
     assert out["source"] == "synthetic-stub"
     assert out["fusion_outcome"] in OUTCOMES
     assert out["match"] is not None

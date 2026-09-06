@@ -1,21 +1,39 @@
 # Coverage config (Person 3 / Stage 3).
 #
-# The Stage 3 crypto core — canonical, merkle, bundle, stage2_adapter and the
-# local half of verify — is unit-covered by tests/test_*.py.
+# What is measured
+# ----------------
+# The Stage 3 crypto core — canonical, merkle, bundle, stage2_adapter,
+# stage2_bridge, verify, verify_cli — is unit-covered by tests/test_*.py, as
+# is anchor.py: its three refusal paths (no bundle, recomputed root != stored
+# root, ABSTAIN verdict) run entirely before any network call and are pinned
+# in tests/test_audit_fixes.py.  Those refusals are the highest-value tests in
+# the repo and they are counted here.
 #
-# The modules below are thin integration glue with no unit-testable logic of
-# their own:
+# What is omitted, and why
+# ------------------------
+#   chain.py   Web3 provider wiring, signing and contract calls.
+#   run.py     the argparse CLI / demo driver + `forge` subprocess shims.
 #
-#   chain.py   Web3 provider wiring + contract calls
-#   anchor.py  orchestrates a real anchor transaction + receipt file
-#   run.py     the argparse CLI / demo driver
+# An earlier version of this file claimed these had "no unit-testable logic of
+# their own".  That was not true and the claim is withdrawn: the pure parts of
+# chain.py — to_bytes32, chain_name, rpc_url, registry_address, private_key —
+# are now unit-tested in tests/test_chain_units.py, and run.py's command
+# surface in tests/test_run.py.  What remains omitted is the part that only a
+# node can exercise: building, signing and broadcasting a transaction, and
+# shelling out to forge.
 #
-# They are exercised end-to-end by tests/test_chain.py and the Foundry suite
-# against a live Anvil node, and by `make demo` / `make stage3-test`, none of
-# which the mocked CI job runs.  Omitting them keeps Person 1's 95% gate a
-# real measure of the logic it can actually see rather than a diluted one.
+# Those paths are not untested either — tests/test_chain.py drives them
+# against a live Anvil node and the `chain-integration` CI job now fails if
+# that file skips.  They are omitted from this percentage only because the
+# mocked job cannot reach them, not because nobody checks them.
 [run]
 omit =
     faceproof/chain.py
-    faceproof/anchor.py
     faceproof/run.py
+    faceproof/__main__.py
+
+[report]
+exclude_also =
+    if TYPE_CHECKING:
+    raise NotImplementedError
+    if __name__ == .__main__.:

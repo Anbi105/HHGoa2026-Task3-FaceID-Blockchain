@@ -1,4 +1,4 @@
-# Known limitations — Stage 1 (probe)
+# Known limitations
 
 Written before they were needed, and deliberately honest. Everything below
 is a real constraint of what is in this repository today, not a hypothetical.
@@ -109,3 +109,91 @@ Exactly one subject per probe. A group photo where a second face exceeds
 deliberate — silently picking the largest face is how you produce a
 confidently wrong result on video — but it means the system cannot process
 group photos at all.
+
+---
+
+# Stage 2 — discovery
+
+## 11. There is no corpus in this repository
+
+`data/index/` ships empty. Channel A is genuine FAISS retrieval, but with no
+`faiss.bin` / `sidecar.jsonl` / `snapshot.json` it cannot retrieve anything,
+so Person 2's fusion returns `ABSTAIN` and Stage 3 records the abstain. That
+abstain is real, not staged — but it also means **no positive match has ever
+been produced by a real search in this repo.** Building the corpus needs
+consenting Bluesky handles, network access and the InsightFace model stack;
+see `data/index/README.md` for the exact procedure.
+
+## 12. Channel B is a stub, not an integration
+
+`vendor/stage2/faceproof/channel_b.py` is three lines that always return
+`{"accepted": False}`. Reverse-image search was never implemented on the
+`person2` branch. Consequences: the `SINGLE_CHANNEL_B` fusion outcome is
+unreachable in practice, and `CORROBORATED` — which needs both channels to
+agree — is unreachable too. Every outcome the integrated pipeline can
+currently produce is `SINGLE_CHANNEL_A` or `ABSTAIN`. The corroboration
+security argument in the design is therefore a property of the design, not a
+property of the running system.
+
+## 13. Index building does not run through the bridge
+
+`faceproof/stage2_bridge.py` loads Person 2's modules by file path.
+`index.build()` uses a relative `from .face import probe_image`, which cannot
+resolve that way, so only `index.search` is reachable through the seam.
+Corpus construction has to run inside Person 2's own tree.
+
+## 14. The synthetic Stage 2 fixture describes a positive match
+
+When no Stage 2 result exists, `stage2_adapter` can return a fabricated
+`SINGLE_CHANNEL_A` record whose bundle is anchorable. It is labelled in the
+evidence (`source: "synthetic-stub"`, `channels_used: ["channel_a:synthetic-stub"]`)
+and, since the audit, it is **opt-in**: reaching it requires `--demo`, and the
+run prints a warning when it is used. Without the flag a missing Stage 2
+result is an error, not a silent fabrication.
+
+---
+
+# Stage 3 — attestation
+
+## 15. The chain attests the record, not the truth of the match
+
+Anchoring proves an evidence bundle existed in exactly this form at that
+block time and has not changed since. It says nothing about whether the face
+match was correct. Conflating the two misreads the system.
+
+## 16. Anchoring is permissionless, and a root can be claimed once
+
+`EvidenceRegistry.anchor` has no access control, and a given root can be
+anchored exactly once, forever. Roots are a deterministic function of the
+bundle, so an observer who sees your bundle before you anchor can anchor that
+root first: your own transaction then reverts `RootAlreadyAnchored`, and the
+`submitter` recorded on chain is theirs, not yours. Nothing is forged — the
+evidence is still the evidence — but first-anchor is not proof of authorship.
+Binding authorship would need a signature over the root from a key committed
+in the bundle; that is not implemented.
+
+## 17. The deployed Amoy contract lags the source
+
+The registry at `0xeE0efb2a3D75f1933f171dE8e8D9Dd14903170d3` was deployed
+before two audit fixes: `verifyField`'s `proof.length == 3` guard, and the
+consent-group change that altered the bundle root. The live anchor (id `0`)
+is therefore reproducible only against the pre-fix schema, and the on-chain
+proof-length guarantee is not live until a redeploy. The Anvil path always
+runs the current source.
+
+## 18. Off-chain availability is not guaranteed
+
+The chain holds a root; the bundle lives locally or at the bundle URI. Lose
+it and the anchor is unopenable — deliberately, since that is also the
+erasure mechanism.
+
+## 19. Testnet, therefore no economic security
+
+Amoy is not economically secured. The design carries to mainnet unchanged,
+but the demonstration does not inherit mainnet finality.
+
+## 20. Anchoring is a public act
+
+The submitting address and the block timestamp are visible forever. The
+commitments reveal nothing, but the fact that a run happened is public
+metadata.

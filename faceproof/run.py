@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -168,7 +169,18 @@ def cmd_search(args: argparse.Namespace) -> int:
         except Stage2Unavailable as exc:
             console.print(f"[yellow]real Stage 2 unavailable: {exc}[/yellow]")
 
-    stage2 = load_stage2(run_dir)
+    from faceproof.stage2_adapter import Stage2ResultMissing
+
+    try:
+        stage2 = load_stage2(run_dir, allow_synthetic=getattr(args, "demo", False))
+    except Stage2ResultMissing as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        return 3
+    if stage2["source"] == "synthetic-stub":
+        console.print(
+            "[yellow]--demo: Stage 2 result is the labelled synthetic fixture, "
+            "not a real search.[/yellow]"
+        )
     manifest.log(
         "STAGE 2", "consumed", source=stage2["source"], outcome=stage2["fusion_outcome"]
     )
@@ -241,9 +253,13 @@ def cmd_forget(args: argparse.Namespace) -> int:
     return cmd_consent_revoke(args.subject)
 
 
-def _forge(*forge_args: str) -> int:
+def _forge(*forge_args: str, env_extra: Optional[dict] = None) -> int:
+    """Run ``forge`` in contracts/.  Secrets go in ``env_extra``, never argv."""
+    env = None
+    if env_extra:
+        env = {**os.environ, **env_extra}
     try:
-        return subprocess.call(["forge", *forge_args], cwd=str(_CONTRACTS_DIR))
+        return subprocess.call(["forge", *forge_args], cwd=str(_CONTRACTS_DIR), env=env)
     except FileNotFoundError:
         console.print("[red]forge not found[/red] - install Foundry (https://getfoundry.sh)")
         console.print(f"would run: forge {' '.join(forge_args)}  (cwd={_CONTRACTS_DIR})")
@@ -251,12 +267,29 @@ def _forge(*forge_args: str) -> int:
 
 
 def cmd_deploy(args: argparse.Namespace) -> int:
+    """Deploy EvidenceRegistry.  The key is passed to forge via the
+    ``ETH_PRIVATE_KEY`` environment variable, not ``--private-key`` on the
+    command line: argv is world-readable through ``ps`` for the lifetime of
+    the process and lands in shell history.
+    """
     rpc = args.rpc or "http://127.0.0.1:8545"
-    key = args.private_key or _ANVIL_ACCT0_KEY  # public Anvil dev key; override for real chains
+    # precedence: explicit flag > PRIVATE_KEY in the environment/.env > the
+    # world-known Anvil dev account
+    key = args.private_key or os.environ.get("PRIVATE_KEY") or _ANVIL_ACCT0_KEY
+
+    if args.private_key:
+        console.print(
+            "[yellow]--private-key puts the key in argv (visible to `ps`).[/yellow] "
+            "Prefer PRIVATE_KEY in .env, or a Foundry keystore."
+        )
+    if key != _ANVIL_ACCT0_KEY:
+        console.print("[dim]deploying with a non-Anvil key (value not shown)[/dim]")
+
     _forge("build")
     return _forge(
         "script", "script/Deploy.s.sol:DeployScript",
-        "--rpc-url", rpc, "--broadcast", "--private-key", key,
+        "--rpc-url", rpc, "--broadcast",
+        env_extra={"ETH_PRIVATE_KEY": key},
     )
 
 
@@ -276,6 +309,7 @@ def cmd_demo(args: argparse.Namespace) -> int:
         run_dir=args.run_dir, img=args.img, subject=args.subject,
         anchor=args.anchor, no_tamper=False, chain=args.anchor,
         real_stage2=getattr(args, "real_stage2", False),
+        demo=True,   # the `demo` subcommand is the deliberate opt-in
     )
     rc = cmd_search(ns)
     if rc == 0 and not args.anchor:
@@ -294,7 +328,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def with_common(sp, *, img=False, run_dir=False, anchor=False, chain=False, subject=False,
-                    real_stage2=False):
+                    real_stage2=False, demo=False):
         if img:
             sp.add_argument("--img", "--image", dest="img", default=None)
         if subject or img:
@@ -305,6 +339,13 @@ def build_parser() -> argparse.ArgumentParser:
             sp.add_argument(
                 "--real-stage2", dest="real_stage2", action="store_true",
                 help="run Person 2's real discovery/fusion first (writes stage2.json)",
+            )
+        if demo:
+            sp.add_argument(
+                "--demo", dest="demo", action="store_true",
+                help="allow the labelled synthetic Stage 2 fixture when no real "
+                     "Stage 2 result exists (it describes a positive match and is "
+                     "anchorable - opt in deliberately)",
             )
         if anchor:
             sp.add_argument("--anchor", action="store_true")
@@ -318,7 +359,7 @@ def build_parser() -> argparse.ArgumentParser:
     with_common(sub.add_parser("probe", help="Stage 1 probe (delegates to faceproof.cli)"), img=True)
     with_common(sub.add_parser("stage2", help="Person 2 discovery/fusion -> stage2.json"), run_dir=True)
     with_common(sub.add_parser("search", help="assemble the evidence bundle"),
-                img=True, run_dir=True, anchor=True, real_stage2=True)
+                img=True, run_dir=True, anchor=True, real_stage2=True, demo=True)
     with_common(sub.add_parser("anchor", help="anchor the bundle root on-chain"), run_dir=True)
     with_common(sub.add_parser("verify", help="independent re-verification"), run_dir=True, chain=True)
     with_common(sub.add_parser("tamper", help="single-character tamper demonstration"), run_dir=True)
@@ -330,7 +371,7 @@ def build_parser() -> argparse.ArgumentParser:
     dp.add_argument("--private-key", dest="private_key", default=None)
     with_common(sub.add_parser("anvil", help="start a local anvil node"))
     with_common(sub.add_parser("demo", help="banner -> search -> verify"),
-                img=True, run_dir=True, anchor=True, real_stage2=True)
+                img=True, run_dir=True, anchor=True, real_stage2=True, demo=True)
     return p
 
 

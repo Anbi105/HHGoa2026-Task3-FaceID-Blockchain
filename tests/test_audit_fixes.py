@@ -271,3 +271,42 @@ def test_verify_run_fails_when_requested_chain_check_cannot_run(tmp_path, monkey
     assert verify_mod.verify_run(tmp_path, check_chain=True) is False
     # and with the chain check not requested, the same run verifies locally
     assert verify_mod.verify_run(tmp_path, check_chain=False) is True
+
+
+# --------------------------------------------------------------------------- #
+# anchor() refuses before it ever reaches the network — the two highest-value
+# refusal paths the old .coveragerc claimed had "no unit-testable logic".
+# --------------------------------------------------------------------------- #
+
+def test_anchor_refuses_a_bundle_whose_root_was_edited(tmp_path):
+    import faceproof.anchor as anchor_mod
+
+    assemble_bundle(tmp_path, _stage1(), _stage2())
+    b = json.loads((tmp_path / "bundle.json").read_text(encoding="utf-8"))
+    b["merkle_root"] = "0x" + "ab" * 32          # a lie
+    (tmp_path / "bundle.json").write_bytes(canon(b))
+
+    with pytest.raises(ValueError, match="refusing to anchor: recomputed root"):
+        anchor_mod.anchor(tmp_path)
+    assert not (tmp_path / "receipt.json").exists()
+
+
+def test_anchor_refuses_an_abstain_verdict(tmp_path):
+    import faceproof.anchor as anchor_mod
+
+    assemble_bundle(tmp_path, _stage1(), _stage2())
+    b = json.loads((tmp_path / "bundle.json").read_text(encoding="utf-8"))
+    b["groups"]["scores"]["fusion_verdict"] = "ABSTAIN"
+    b["merkle_root"] = __import__("faceproof.bundle", fromlist=["x"]).compute_root(b["groups"])
+    (tmp_path / "bundle.json").write_bytes(canon(b))
+
+    with pytest.raises(ValueError, match="fusion verdict is ABSTAIN"):
+        anchor_mod.anchor(tmp_path)
+    assert not (tmp_path / "receipt.json").exists()
+
+
+def test_anchor_refuses_when_there_is_no_bundle(tmp_path):
+    import faceproof.anchor as anchor_mod
+
+    with pytest.raises(FileNotFoundError, match="nothing to anchor"):
+        anchor_mod.anchor(tmp_path)

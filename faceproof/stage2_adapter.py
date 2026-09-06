@@ -166,14 +166,29 @@ def _synthetic() -> Dict[str, Any]:
     return normalize(raw, source="synthetic-stub")
 
 
-def load_stage2(run_dir: Path | str, embedding: Optional[Any] = None) -> Dict[str, Any]:
+class Stage2ResultMissing(FileNotFoundError):
+    """No Stage 2 output in the run directory, and the stub was not requested."""
+
+
+def load_stage2(
+    run_dir: Path | str,
+    embedding: Optional[Any] = None,
+    *,
+    allow_synthetic: bool = False,
+) -> Dict[str, Any]:
     """Return the normalised Stage 2 result for ``run_dir``.
 
     Order of preference:
 
     1. a Stage 2 file already present in the run directory (Person 2's
        output, consumed as-is);
-    2. a synthetic fixture, clearly labelled, so Stage 3 is self-contained.
+    2. **only when explicitly requested** via ``allow_synthetic``, the
+       labelled synthetic fixture, so Stage 3 is demonstrable on its own.
+
+    The stub describes a *positive* match and its bundle is anchorable, so it
+    is deliberately not the default: reaching it must be a decision someone
+    typed (``--demo``), never what happens when a Stage 2 file is simply
+    absent.  Without the flag this raises :class:`Stage2ResultMissing`.
 
     ``embedding`` is accepted for signature compatibility with a real
     discovery call but is intentionally unused - Stage 3 never re-runs
@@ -185,4 +200,12 @@ def load_stage2(run_dir: Path | str, embedding: Optional[Any] = None) -> Dict[st
         if candidate.exists():
             raw = json.loads(candidate.read_text(encoding="utf-8"))
             return normalize(raw, source=f"person2-file:{name}")
+
+    if not allow_synthetic:
+        raise Stage2ResultMissing(
+            f"no Stage 2 result in {run_path} (looked for "
+            f"{', '.join(_STAGE2_FILENAMES)}). Run "
+            f"`python -m faceproof.run stage2 --run-dir {run_path}` first, or "
+            f"pass --demo to use the clearly-labelled synthetic fixture."
+        )
     return _synthetic()

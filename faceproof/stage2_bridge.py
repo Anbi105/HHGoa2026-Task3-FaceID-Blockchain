@@ -7,20 +7,35 @@ imported normally alongside this package.
 
 This module is the smallest possible seam.  It:
 
-* loads **Person 2's real** ``fuse.py``, ``channel_b.py`` and ``index.py`` by
-  file path (never modifying them, never putting them on ``sys.path``);
+* loads Person 2's ``fuse.py``, ``channel_b.py`` and ``index.py`` from
+  ``vendor/stage2/`` by file path (never modifying them, never putting them
+  on ``sys.path``);
 * reads the Stage 1 handoff embedding (``embedding.f32``);
 * runs Channel A = Person 2's ``index.search`` **iff** a local FAISS index is
   present under ``data/index/`` - it never fabricates a corpus;
-* runs Channel B = Person 2's ``channel_b.discover`` (opt-in; degrades to
-  "not accepted" without a SERPAPI key, exactly as Person 2 designed);
-* fuses the two with Person 2's real ``fuse.fuse``;
+* runs Channel B = Person 2's ``channel_b.discover``;
+* fuses the two with Person 2's ``fuse.fuse``;
 * writes ``out/run-<id>/stage2.json`` in the shape
   :func:`faceproof.stage2_adapter.normalize` already consumes.
 
 Raw post text is hashed here and never written to disk.  With no local index,
 Person 2's ``fuse`` returns ``ABSTAIN`` and Stage 3 honestly records the
 abstain - there is no synthetic match on this path.
+
+What the vendored tree actually contains
+----------------------------------------
+Be precise about this, because "runs Person 2's real modules" oversells it:
+
+* ``fuse.fuse`` is complete - the three-outcome corroboration rule, used as-is.
+* ``channel_b.discover`` is a **three-line stub** that always returns
+  ``{"accepted": False, "reason": "no_SERPAPI_KEY_or_ephemeral_host"}``.
+  Reverse-image search is not implemented on the ``person2`` branch, so
+  ``SINGLE_CHANNEL_B`` is unreachable through this bridge today.
+* ``index.search`` is complete and is genuine FAISS retrieval - but
+  ``index.build`` is **not reachable** here: it does ``from .face import
+  probe_image``, a relative import that cannot resolve under
+  :func:`_load_by_path`.  Building a corpus therefore still runs on Person 2's
+  own tree, not through this seam.  See ``data/index/README.md``.
 """
 
 from __future__ import annotations
@@ -40,11 +55,11 @@ from faceproof.manifest import Manifest
 STAGE2_FILENAME = "stage2.json"
 STAGE2_SCHEMA_ID = "faceproof.stage2.bridge.v1"
 
-# Where Person 2's package may live, relative to the repo root.  The merged
-# copy (branch ``person2`` nests everything under this directory) is tried
-# first; the side-by-side reference clone is the fallback.
+# Where Person 2's package may live, relative to the repo root.  The vendored
+# copy is tried first; the side-by-side reference clone is the fallback (that
+# clone keeps the original ``person2`` branch layout, so its path is longer).
 _P2_PKG_CANDIDATES = (
-    "files-mentioned-by-the-user-hhgoa/faceproof/faceproof",
+    "vendor/stage2/faceproof",
     "person2/files-mentioned-by-the-user-hhgoa/faceproof/faceproof",
 )
 

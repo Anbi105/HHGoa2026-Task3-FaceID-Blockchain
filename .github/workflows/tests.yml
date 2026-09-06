@@ -7,8 +7,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
-    name: Stage 1 test suite
+  # ── 1. the mocked Python suite, across the supported interpreters ──────
+  python:
+    name: Python suite (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -26,17 +27,124 @@ jobs:
       # The suite is fully mocked: no model weights, no network, no writes
       # outside tmp_path.  insightface is imported lazily inside face.app(),
       # which the tests never call — so CI does not need the 330 MB model
-      # stack, and the fact that this job passes without it is itself the
-      # proof that the import is deferred.
+      # stack, and this job passing without it is itself the proof that the
+      # import is deferred.
+      #
+      # The Stage 3 stack (web3 / eth-*) IS installed: without it
+      # tests/test_chain.py hits `pytest.importorskip` and the entire
+      # blockchain path disappears from CI without anyone noticing.
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
           pip install \
-            "opencv-python-headless" "numpy" "python-dotenv" \
-            "rich" "pycryptodome" "pytest" "pytest-cov"
+            "opencv-python-headless" "numpy<2" "python-dotenv" \
+            "rich" "pycryptodome" "pytest" "pytest-cov" \
+            "web3==8.0.0" "eth-utils==6.0.0" "eth-account==0.14.0"
 
       - name: Run tests
         run: python -m pytest tests/ --cov=faceproof --cov-report=term-missing
 
       - name: Fail if coverage regresses below 95%
         run: python -m pytest tests/ --cov=faceproof --cov-fail-under=95 -q
+
+  # ── 2. the crypto core must import with no face stack at all ──────────
+  # A third party re-verifying a bundle should not need InsightFace or
+  # OpenCV.  This job installs only the `verify` extra and imports the
+  # modules a verifier actually touches.
+  verify-only:
+    name: Verify-only install (no face stack)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install only the verify extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[verify]"
+
+      - name: Assert the face stack is absent
+        run: |
+          python - <<'PY'
+          import importlib.util, sys
+          for mod in ("cv2", "numpy", "insightface", "onnxruntime"):
+              if importlib.util.find_spec(mod) is not None:
+                  sys.exit(f"{mod} is installed — this job must prove it is not needed")
+          print("no cv2 / numpy / insightface / onnxruntime — good")
+          PY
+
+      - name: Import the crypto core and the verifier CLI
+        run: |
+          python -c "import faceproof, faceproof.canonical, faceproof.merkle, faceproof.bundle, faceproof.verify, faceproof.verify_cli; print('crypto core imports clean')"
+          python -m faceproof.verify_cli --help > /dev/null
+
+  # ── 3. the contract suite ─────────────────────────────────────────────
+  contracts:
+    name: Foundry contract suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: forge build
+        run: forge build --root contracts --sizes
+
+      - name: forge test
+        run: forge test --root contracts -vv
+
+  # ── 4. Stage 3 against a live chain — this is what used to skip ───────
+  chain-integration:
+    name: Stage 3 on Anvil
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            "opencv-python-headless" "numpy<2" "python-dotenv" \
+            "rich" "pycryptodome" "pytest" \
+            "web3==8.0.0" "eth-utils==6.0.0" "eth-account==0.14.0"
+
+      # chain.py loads the ABI from the Foundry artifact, never a
+      # hand-maintained copy — so the build has to happen before the tests.
+      - name: forge build (produces the ABI chain.py reads)
+        run: forge build --root contracts
+
+      - name: Start Anvil
+        run: |
+          anvil --silent &
+          for i in $(seq 1 30); do
+            if cast chain-id --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then
+              echo "anvil up"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::anvil did not start"; exit 1
+
+      # A silent skip here is exactly the regression this job exists to catch,
+      # so an empty or skipped run is a failure, not a pass.
+      - name: Stage 3 chain integration (must not skip)
+        run: |
+          python -m pytest tests/test_chain.py -q -rs | tee chain.log
+          if grep -qiE "skipped|no tests ran" chain.log; then
+            echo "::error::tests/test_chain.py skipped — the blockchain path is not being tested"
+            exit 1
+          fi
+
+      - name: Full suite with the chain path live
+        run: python -m pytest tests/ -q

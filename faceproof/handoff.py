@@ -180,10 +180,12 @@ def write_record(run_dir: Path | str, record: Dict[str, Any]) -> Path:
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     path = run_dir / PROBE_FILENAME
-    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    path.write_text(
+        json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return path
 
 
 def load_record(run_dir: Path | str) -> Dict[str, Any]:
     """Read a handoff record (Stage 2 entry point)."""
-    return json.loads((Path(run_dir) / PROBE_FILENAME).read_text())
+    return json.loads((Path(run_dir) / PROBE_FILENAME).read_text(encoding="utf-8"))

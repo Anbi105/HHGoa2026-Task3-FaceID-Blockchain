@@ -1,4 +1,4 @@
-﻿[profile.default]
+[profile.default]
 src = "src"
 test = "test"
 script = "script"

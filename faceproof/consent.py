@@ -273,22 +273,49 @@ class ConsentStore:
     def load(self) -> "ConsentStore":
         self._records = {}
         if self.path.exists():
-            raw = json.loads(self.path.read_text() or "{}")
+            raw = json.loads(self.path.read_text(encoding="utf-8") or "{}")
             for sid, d in raw.get("subjects", {}).items():
                 self._records[sid] = ConsentRecord.from_dict(d)
         return self
 
     def save(self) -> None:
+        """Atomically write the store, never leaving salts world-readable.
+
+        The temp file is created 0600 *before* anything is written to it.
+        Writing at the default umask (0644) and only chmod-ing the final path
+        after ``os.replace`` leaves a window in which every local user can
+        read the per-subject salts — the one secret in this repo whose
+        disclosure defeats the erasure guarantee.  The directory is 0700 for
+        the same reason.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(self.path.parent, 0o700)
+        except (OSError, NotImplementedError):  # pragma: no cover - Windows
+            pass
+
         payload = {
             "schema": "faceproof.consent_store.v1",
             "updated_at": _iso(_now()),
             "subjects": {sid: r.to_dict() for sid, r in sorted(self._records.items())},
         }
+        body = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        # O_CREAT|O_EXCL with mode 0600: the file never exists at a wider mode.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        fd = os.open(tmp, flags, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(body)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
         os.replace(tmp, self.path)
-        os.chmod(self.path, 0o600)  # contains salts
+        try:
+            os.chmod(self.path, 0o600)  # contains salts
+        except (OSError, NotImplementedError):  # pragma: no cover - Windows
+            pass
 
     # ── Operations ──────────────────────────────────────────────────
 

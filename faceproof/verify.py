@@ -189,8 +189,12 @@ def verify_run(run_dir: Path | str, *, check_chain: bool = True) -> bool:
 
     row("recomputed root", local["derived_root"][:18] + "...", None)
     row("== stored root", str(local["stored_root"])[:18] + "...", local["root_match"])
-    row("selective disclosure (regenerated proof)", "match_location", local["selective_disclosure_regenerated"])
-    row("selective disclosure (proofs.json)", "match_location", local["selective_disclosure_stored_proof"])
+    # Both rows check against the anchored root.  The second is deliberately
+    # narrower than the first: it asks only whether *this leaf* is still under
+    # the anchored root, so it can legitimately stay green when a different
+    # group was altered - the regenerated row and `== stored root` catch that.
+    row("selective disclosure (tree rebuilt)", "match_location", local["selective_disclosure_regenerated"])
+    row("match_location leaf under anchored root", "proofs.json", local["selective_disclosure_stored_proof"])
     row("== on-chain root", "EvidenceRegistry.get()", chain_cell(chain["chain_root_match"]))
     row("on-chain verifyField()", "match_location", chain_cell(chain["chain_verify_field"]))
     console.print(table)

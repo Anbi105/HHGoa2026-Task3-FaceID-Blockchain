@@ -6,36 +6,48 @@ build-backend = "setuptools.build_meta"
 name = "faceproof"
 version = "1.1.0"
 description = "Face AI / Stage 1 probe — Hacker House Goa 2026 Task 3"
-requires-python = ">=3.11"
+# numpy<2 is required by InsightFace 0.7.3 / faiss-cpu (numpy 1.x ABI), and
+# Python 3.14 has no numpy 1.x wheel — hence the upper bound (guide §4).
+requires-python = ">=3.11,<3.14"
 
 # Pinned, not ranged.  A resolver picking a new onnxruntime the night
 # before the recording is a real way to lose a weekend (§4).
-#
-# NOTE: the guide specifies Python 3.11 with numpy<2.  The versions below
-# are the set actually installed and verified on this machine, which runs
-# Python 3.14 — numpy 1.x has no 3.14 wheels, so that pin is unreachable
-# here.  requirements.lock.txt is the full transitive freeze.  See
-# LIMITATIONS.md before reproducing on another machine.
+# requirements.lock.txt is the full transitive freeze of the same set.
 dependencies = [
+    # ── Stage 1 — probe ────────────────────────────────────────────
     "insightface==0.7.3",
     "onnxruntime==1.29.0",
     "opencv-python-headless==4.11.0.86",
-    "numpy==2.5.2",
+    "numpy==1.26.4",
     "pillow==12.3.0",
-    "python-dotenv==1.0.1",
+    "python-dotenv==1.2.3",
     "rich==15.0.0",
     "pycryptodome==3.23.0",
-    # ── Stage 3 (blockchain attestation) — added by Person 3 ────────
-    # Pinned to the versions installed and verified in this checkout's
-    # .venv.  keccak/ABI/RPC only; no change to any Stage 1 pin above.
+    # ── Stage 2 — Channel A vector index ───────────────────────────
+    "faiss-cpu==1.15.0",
+    # ── Stage 3 — attestation ──────────────────────────────────────
+    # eth-account is imported directly by faceproof/chain.py, so it is a
+    # declared dependency rather than an implicit web3 transitive.
     "web3==8.0.0",
     "eth-utils==6.0.0",
+    "eth-account==0.14.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest==8.4.2",
     "pytest-cov==5.0.0",
+]
+# Independent third-party re-verification: recompute the root from a bundle
+# and check it against the chain, with no face/model stack installed.
+# `pip install "faceproof[verify]"` then `python -m faceproof.verify_cli`.
+verify = [
+    "python-dotenv==1.2.3",
+    "rich==15.0.0",
+    "pycryptodome==3.23.0",
+    "web3==8.0.0",
+    "eth-utils==6.0.0",
+    "eth-account==0.14.0",
 ]
 
 [tool.setuptools.packages.find]
