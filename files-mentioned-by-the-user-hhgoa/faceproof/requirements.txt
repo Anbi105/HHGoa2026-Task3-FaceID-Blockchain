@@ -1,0 +1,14 @@
+insightface==0.7.3
+onnxruntime==1.19.2
+faiss-cpu==1.8.0
+opencv-python-headless==4.10.0.84
+numpy<2
+pillow==10.4.0
+imagehash==4.3.1
+web3==7.6.0
+eth-utils==5.1.0
+requests==2.32.3
+websockets==13.1
+python-dotenv==1.0.1
+rich==13.9.4
+pytest==8.3.4
