@@ -132,6 +132,7 @@ def test_channel_a_without_an_index_does_not_fabricate(monkeypatch):
 
 def test_channel_a_reports_a_corrupt_index_instead_of_crashing(monkeypatch):
     monkeypatch.setattr(sb, "_index_present", lambda: True)
+    monkeypatch.setattr(sb, "_faiss_available", lambda: True)
     idx = _FakeIndex(raises=RuntimeError("faiss.bin truncated"))
     out = sb._run_channel_a(idx, None, log=lambda *a, **k: None)
     assert out["accepted"] is False
@@ -141,6 +142,7 @@ def test_channel_a_reports_a_corrupt_index_instead_of_crashing(monkeypatch):
 
 def test_channel_a_surfaces_the_top_hit_fields(monkeypatch):
     monkeypatch.setattr(sb, "_index_present", lambda: True)
+    monkeypatch.setattr(sb, "_faiss_available", lambda: True)
     hit = {"post_uri": "at://x/1", "post_url": "https://bsky.app/p/1", "score": 0.9}
     idx = _FakeIndex(result={
         "accepted": True, "reason": "accepted", "hits": [hit],
@@ -179,3 +181,13 @@ def test_winner_for_single_channel_b_finds_a_nested_record():
 def test_channels_used_labels_corroboration():
     assert sb._channels_used("CORROBORATED", {}, {}) == ["channel_a", "channel_b"]
     assert sb._channels_used("SINGLE_CHANNEL_B", {}, {}) == ["channel_b"]
+
+
+def test_channel_a_without_faiss_reports_it_and_does_not_fabricate(monkeypatch):
+    """An index on disk but no faiss installed is a clear reason, not a crash."""
+    monkeypatch.setattr(sb, "_index_present", lambda: True)
+    monkeypatch.setattr(sb, "_faiss_available", lambda: False)
+    out = sb._run_channel_a(_FakeIndex(), None, log=lambda *a, **k: None)
+    assert out["accepted"] is False
+    assert out["reason"] == "faiss_not_installed"
+    assert out["hits"] == []

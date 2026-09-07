@@ -133,6 +133,19 @@ def _index_present() -> bool:
     return all((d / f).exists() for f in ("faiss.bin", "sidecar.jsonl", "snapshot.json"))
 
 
+def _faiss_available() -> bool:
+    """Is Person 2's vector backend importable?
+
+    Split out so a unit test of the bridge's own control flow does not have to
+    install a 30 MB native library to exercise the paths past this check.
+    """
+    try:
+        import faiss  # noqa: F401  (Person 2's index.search imports it too)
+    except ImportError:
+        return False
+    return True
+
+
 def index_stats() -> Optional[Dict[str, Any]]:
     """Person 2's ``data/index/snapshot.json`` if a local index exists."""
     snap = _index_dir() / "snapshot.json"
@@ -168,9 +181,7 @@ def _run_channel_a(index_mod: ModuleType, embedding, *, log) -> Dict[str, Any]:
             "snapshot": {},
         }
 
-    try:
-        import faiss  # noqa: F401  (Person 2's index.search imports it too)
-    except ImportError:
+    if not _faiss_available():
         log("STAGE 2", "channel_a", status="faiss_not_installed")
         return {
             "accepted": False,
