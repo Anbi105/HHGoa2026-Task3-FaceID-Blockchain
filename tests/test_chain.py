@@ -101,6 +101,10 @@ def test_connected(w3):
 
 
 def test_abi_from_foundry_artifact_has_full_interface():
+    # Needs `forge build`; the mocked CI job has no Foundry, and the
+    # chain-integration job builds first and asserts this file does NOT skip.
+    if not ARTIFACT_PATH.exists():
+        pytest.skip("run `forge build` in contracts/ first")
     names = {i["name"] for i in get_abi() if i.get("type") == "function"}
     assert {"anchor", "total", "get", "idOf", "verifyField"} <= names
 
