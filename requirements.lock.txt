@@ -8,10 +8,15 @@
 #   Stage 3 (attestation)  web3 + eth-* tree, frozen from the .venv the test
 #                          suite actually passes in.
 #
-# Python 3.11-3.13.  numpy is pinned <2 deliberately: InsightFace 0.7.3 and
+# Python 3.11-3.12.  numpy is pinned <2 deliberately: InsightFace 0.7.3 and
 # several faiss-cpu builds are compiled against the numpy 1.x ABI and fail at
-# import time against numpy 2 (guide §4).  Python 3.14 has no numpy 1.x wheel,
-# which is why 3.14 is out of range rather than numpy 2 being pinned in.
+# import time against numpy 2 (guide §4).  numpy 1.26.4 publishes no cp313
+# wheel, which is why 3.13 is out of range rather than numpy 2 being pinned in.
+#
+# VERIFIED: `pip install -r requirements.lock.txt` resolves all 88 pins on
+# CPython 3.11.  insightface and stringzilla ship no Windows wheels and build
+# from source, so a Windows install additionally needs MSVC C++ Build Tools;
+# Linux/CI has a toolchain and needs nothing extra.
 #
 # Platform-specific wheels (e.g. pywin32) are intentionally not pinned here.
 
@@ -48,6 +53,7 @@ scikit-image==0.26.0
 scikit-learn==1.9.0
 scipy==1.17.1
 joblib==1.6.0
+cloudpickle==3.1.2
 threadpoolctl==3.6.0
 networkx==3.6.1
 ImageIO==2.37.4
@@ -68,7 +74,7 @@ pyparsing==3.3.2
 simsimd==6.5.16
 stringzilla==5.1.2
 narwhals==2.25.0
-ml_dtypes==0.6.0
+ml_dtypes==0.5.4
 flatbuffers==25.12.19
 protobuf==7.36.1
 pycryptodome==3.23.0

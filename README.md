@@ -13,7 +13,7 @@
 [![python tests](https://img.shields.io/badge/pytest-221-3fb950?labelColor=1f2328)](#tests)
 [![foundry](https://img.shields.io/badge/forge_test-9%20passing-3fb950?labelColor=1f2328)](#foundry-tests)
 [![solidity](https://img.shields.io/badge/solidity-0.8.24-363636?logo=solidity&logoColor=white&labelColor=1f2328)](contracts/src/EvidenceRegistry.sol)
-[![python](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-3776AB?logo=python&logoColor=white&labelColor=1f2328)](pyproject.toml)
+[![python](https://img.shields.io/badge/python-3.11%20|%203.12-3776AB?logo=python&logoColor=white&labelColor=1f2328)](pyproject.toml)
 [![stage](https://img.shields.io/badge/stage_3-attestation-8250df?labelColor=1f2328)](#stage-3--blockchain-attestation)
 
 **Team OneReign** · **A face never becomes a vector without consent — and it never becomes a row on a chain at all.**<br/>
@@ -93,7 +93,24 @@ python -m venv .venv
 source .venv/bin/activate && pip install -e ".[dev]"
 ```
 
-Installing the package pulls in the Stage 3 dependencies (`web3`, `eth-utils`) alongside the core pipeline stack. For the smart-contract half you also need [Foundry](https://getfoundry.sh) (`forge`, `anvil`) on your `PATH`.
+`[dev]` installs everything — the Stage 1 model stack, the Stage 2 index and the
+attestation core — plus the test tooling. The install is split into extras so a
+third party can re-verify a bundle without any of the face stack:
+
+| Install | What you get | Needs a C toolchain? |
+|---------|--------------|:---:|
+| `pip install faceproof` | attestation core only — canonical JSON, Merkle, registry client, `faceproof.verify_cli` | no |
+| `pip install "faceproof[probe]"` | adds Stage 1: InsightFace, ONNX Runtime, OpenCV, `numpy<2` | yes on Windows |
+| `pip install "faceproof[stage2]"` | adds `faiss-cpu` for Channel A | no |
+| `pip install -e ".[dev]"` | all of the above + `pytest` | yes on Windows |
+
+**Python 3.11–3.12.** `numpy` is pinned `<2` for the InsightFace / faiss ABI, and
+numpy 1.26.4 publishes no cp313 wheel — so 3.13 is out of range for `[probe]`.
+
+`insightface` and `stringzilla` ship no Windows wheels and build from source, so
+`[probe]` / `[dev]` on Windows also needs [MSVC C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/).
+Linux and macOS have a toolchain already. For the smart-contract half you also
+need [Foundry](https://getfoundry.sh) (`forge`, `anvil`) on your `PATH`.
 
 ### Run the tests
 
