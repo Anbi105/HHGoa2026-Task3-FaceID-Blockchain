@@ -70,7 +70,11 @@ class Manifest:
             "run_id": self.run_id,
             "stage": stage,
             "event": event,
-            **fields,
+            **{
+                key: str(value).replace("\\", "/")
+                if isinstance(value, Path) else value
+                for key, value in fields.items()
+            },
         }
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, sort_keys=True, default=str) + "\n")
@@ -89,7 +93,7 @@ class Manifest:
             stage,
             "artifact",
             _echo_hide=("sha256",),
-            path=str(p),
+            path=str(p).replace("\\", "/"),
             bytes=p.stat().st_size,
             sha256_short=digest[:16] + "...",
             sha256=digest,

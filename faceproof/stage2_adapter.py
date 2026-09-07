@@ -105,6 +105,13 @@ def normalize(raw: Dict[str, Any], *, source: str) -> Dict[str, Any]:
     }
 
     if outcome == "ABSTAIN":
+        # Carry the threshold through even with no match: an abstain is only
+        # interpretable beside the number the top score failed to clear, and
+        # a reader of this dict should not have to re-derive it from config.
+        result["threshold"] = q(
+            _first_present(raw, "threshold", "accept_threshold", default=cfg.accept_at)
+        )
+        result["reason"] = str(raw.get("reason", "") or "")
         return result
 
     raw_text = hit.get("text")
@@ -124,7 +131,7 @@ def normalize(raw: Dict[str, Any], *, source: str) -> Dict[str, Any]:
         "text_sha256": str(text_sha or _sha256_hex("")),
         "text_length": int(text_len or 0),
         "image_sha256": str(_first_present(hit, "image_sha256", "image_hash")),
-        "phash": str(_first_present(hit, "phash", "perceptual_hash")),
+        "phash": str(_first_present(hit, "phash", "image_phash", "perceptual_hash")),
         "source_url": str(
             _first_present(hit, "source_url", "image_url")
             or _first_present(hit, "post_url", "url")

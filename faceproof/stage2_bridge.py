@@ -31,11 +31,13 @@ Be precise about this, because "runs Person 2's real modules" oversells it:
   ``{"accepted": False, "reason": "no_SERPAPI_KEY_or_ephemeral_host"}``.
   Reverse-image search is not implemented on the ``person2`` branch, so
   ``SINGLE_CHANNEL_B`` is unreachable through this bridge today.
-* ``index.search`` is complete and is genuine FAISS retrieval - but
-  ``index.build`` is **not reachable** here: it does ``from .face import
+* ``index.search`` is complete and is genuine FAISS retrieval.  ``index.build``
+  is not reachable through *this* module - it does ``from .face import
   probe_image``, a relative import that cannot resolve under
-  :func:`_load_by_path`.  Building a corpus therefore still runs on Person 2's
-  own tree, not through this seam.  See ``data/index/README.md``.
+  :func:`_load_by_path` - but it is reachable through
+  :mod:`faceproof.stage2_corpus`, which loads the vendored tree as a real
+  package and supplies the image-fetch step Person 2 left unwritten.  See
+  ``data/index/README.md``.
 """
 
 from __future__ import annotations
@@ -46,7 +48,7 @@ import json
 import time
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Dict, List, Optional
+from typing import Tuple, Any, Dict, List, Optional
 
 from faceproof.config import cfg
 from faceproof.handoff import load_record, read_embedding
@@ -162,6 +164,49 @@ def index_stats() -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+def _subject_of(hit: Dict[str, Any]) -> str:
+    """Identity label for a gallery row: subject, else author DID, else handle."""
+    for key in ("subject", "author_did", "author_handle"):
+        v = hit.get(key)
+        if v:
+            return str(v)
+    return ""
+
+
+def _cross_subject_margin(hits: List[Dict[str, Any]]) -> Tuple[float, Optional[Dict[str, Any]]]:
+    """Rank-1 score minus the best score from a *different* subject.
+
+    Guide p.45, failure modes::
+
+        Top-1 is correct but the margin gate rejects it
+          cause: several images of the same person in the corpus - rank 2 is also them
+          fix:   compute margin against the best hit from a *different* author,
+                 not rank 2 outright
+
+    Person 2's ``index.search`` uses ``hits[0] - hits[1]`` unconditionally, so a
+    gallery holding two photographs of the same subject makes a *correct*
+    identification look ambiguous: the runner-up is the same person, the margin
+    collapses, and the run abstains on ``ambiguous_neighbourhood``.
+
+    This does not change the threshold or the gate - ``accept_at`` and
+    ``min_margin`` are untouched.  It changes only *which pair* the margin is
+    measured between, which is what the margin was always meant to express:
+    how far the winner stands clear of the nearest *other identity*.
+
+    Returns ``(margin, runner_up)``.  With no differing subject in the gallery
+    there is nothing to be confused with, so the margin is the rank-1 score
+    itself and the runner-up is ``None``.
+    """
+    if not hits:
+        return 0.0, None
+    top = hits[0]
+    top_subject = _subject_of(top)
+    for hit in hits[1:]:
+        if _subject_of(hit) != top_subject:
+            return float(top.get("score", 0.0)) - float(hit.get("score", 0.0)), hit
+    return float(top.get("score", 0.0)), None
+
+
 def _run_channel_a(index_mod: ModuleType, embedding, *, log) -> Dict[str, Any]:
     """Channel A = Person 2's ``index.search`` against a *real* local index.
 
@@ -207,13 +252,46 @@ def _run_channel_a(index_mod: ModuleType, embedding, *, log) -> Dict[str, Any]:
         for k in ("post_uri", "post_url", "image_sha256"):
             result.setdefault(k, hits[0].get(k))
     snap = result.get("snapshot") or {}
+
+    # Re-derive the margin against the nearest *different* identity (guide p.45).
+    # Person 2's own value is kept alongside it so the artifact shows both and
+    # the change is auditable rather than silent.
+    p2_margin = float(result.get("margin", 0.0))
+    margin, runner_up = _cross_subject_margin(hits)
+    result["margin_rank1_rank2"] = p2_margin
+    result["margin"] = margin
+    result["runner_up_subject"] = _subject_of(runner_up) if runner_up else None
+    result["margin_basis"] = ("nearest_different_subject" if runner_up
+                              else "no_other_subject_in_gallery")
+
+    if hits:
+        top = hits[0]
+        score = float(top.get("score", 0.0))
+        accepted = bool(score >= cfg.accept_at and margin >= cfg.min_margin)
+        if accepted:
+            reason = "accepted"
+        elif score < cfg.accept_at:
+            reason = "below_threshold"
+        else:
+            reason = "ambiguous_neighbourhood"
+        result["accepted"] = accepted
+        result["reason"] = reason
+        for r, h in enumerate(hits[:5], 1):     # the leaderboard is the evidence
+            log("STAGE 2", f"channel_a_rank_{r}",
+                subject=_subject_of(h), score=round(float(h.get("score", 0.0)), 6))
+
     log(
         "STAGE 2",
         "channel_a",
         status=result.get("reason"),
         accepted=result.get("accepted"),
         n_hits=len(hits),
-        margin=round(float(result.get("margin", 0.0)), 6),
+        margin=round(margin, 6),
+        margin_basis=result["margin_basis"],
+        runner_up=result["runner_up_subject"],
+        margin_rank1_rank2=round(p2_margin, 6),
+        accept_at=cfg.accept_at,
+        min_margin=cfg.min_margin,
         snapshot_id=snap.get("snapshot_id", ""),
     )
     return result
@@ -241,7 +319,13 @@ def _match_from_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
 
     Only fields Person 2 actually produces are passed through.  ``text`` is
     hashed here and dropped; ``image_sha256`` / ``phash`` are left empty when
-    Person 2's corpus does not carry them (it computes no perceptual hash).
+    the corpus does not carry them.
+
+    The sidecar names the perceptual hash ``image_phash`` (both Person 2's
+    ingest and the local corpus builder write that key), so reading only
+    ``phash`` silently dropped it and ``match_image`` reached the bundle with
+    an empty perceptual hash - one of the three fields the guide specifies for
+    that group (p.25).
     """
     raw_text = hit.get("text")
     text_sha = hit.get("text_sha256") or (
@@ -259,17 +343,25 @@ def _match_from_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
         "text_sha256": str(text_sha),
         "text_length": int(text_len or 0),
         "image_sha256": str(hit.get("image_sha256", "") or ""),
-        "phash": str(hit.get("phash", "") or ""),
+        "phash": str(hit.get("image_phash") or hit.get("phash") or ""),
         "source_url": str(hit.get("image_url") or hit.get("post_url", "")),
         "score": float(hit.get("score", 0.0)),
     }
 
 
-def run_stage2(run_dir: Path | str, *, write: bool = True) -> Dict[str, Any]:
+def run_stage2(run_dir: Path | str, *, write: bool = True,
+               detail: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Run Person 2's Stage 2 for ``run_dir`` and (optionally) write stage2.json.
 
     Returns the payload dict.  Raises :class:`Stage2Unavailable` only if Person
     2's package cannot be found on disk.
+
+    ``detail``, if given, is filled in with the raw per-channel results
+    (``channel_a``, ``channel_b``, ``fused``).  The written ``stage2.json`` is
+    unchanged - the payload deliberately reports only ``channels_used``, but a
+    caller that wants to *display* each channel separately (the dashboard shows
+    Channel A and Channel B as independent cards) would otherwise have to
+    re-run the channels itself.  Purely an out-parameter; no caller is affected.
     """
     run_path = Path(run_dir)
     manifest = Manifest(run_path)
@@ -284,6 +376,9 @@ def run_stage2(run_dir: Path | str, *, write: bool = True) -> Dict[str, Any]:
     p2 = load_person2_modules()
 
     if stage1.get("status") == "rejected":
+        if detail is not None:
+            detail.update(channel_a=None, channel_b=None, fused=None,
+                          skipped="stage1_rejected")
         payload = _abstain_payload(reason="stage1_rejected",
                                    channels=["channel_a:skipped", "channel_b:skipped"])
         if write:
@@ -297,6 +392,14 @@ def run_stage2(run_dir: Path | str, *, write: bool = True) -> Dict[str, Any]:
     channel_b = _run_channel_b(p2["channel_b"], embedding, log=log)
 
     fused = p2["fuse"].fuse(channel_a, channel_b)
+    if detail is not None:
+        # The dashboard receives this in /api/job. Keep provenance and scores,
+        # but never return raw post text or local corpus paths to the browser.
+        detail.update(
+            channel_a=_public_channel(channel_a),
+            channel_b=_public_channel(channel_b),
+            fused={"outcome": str(fused.get("outcome", "ABSTAIN")).upper()},
+        )
     outcome = str(fused.get("outcome", "ABSTAIN")).upper()
     log("STAGE 2", "fusion", outcome=outcome)
 
@@ -308,6 +411,8 @@ def run_stage2(run_dir: Path | str, *, write: bool = True) -> Dict[str, Any]:
             reason=channel_a.get("reason") or "fusion_abstain",
             channels=channels_used,
             snapshot_id=snap.get("snapshot_id", ""),
+            channel_a=_public_channel(channel_a),
+            channel_b=_public_channel(channel_b),
         )
         if write:
             _write(run_path, payload)
@@ -340,6 +445,8 @@ def run_stage2(run_dir: Path | str, *, write: bool = True) -> Dict[str, Any]:
         "margin": float(channel_a.get("margin", 0.0)),
         "threshold": float(cfg.accept_at),
         "match": _match_from_hit(winner),
+        "channel_a": _public_channel(channel_a),
+        "channel_b": _public_channel(channel_b),
     }
     if write:
         _write(run_path, payload)
@@ -376,7 +483,8 @@ def _channels_used(outcome: str, a: Dict[str, Any], b: Dict[str, Any]) -> List[s
 
 
 def _abstain_payload(*, reason: str, channels: List[str],
-                     snapshot_id: str = "") -> Dict[str, Any]:
+                     snapshot_id: str = "", channel_a: Optional[Dict[str, Any]] = None,
+                     channel_b: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return {
         "schema_id": STAGE2_SCHEMA_ID,
         "source": "person2-bridge",
@@ -385,9 +493,33 @@ def _abstain_payload(*, reason: str, channels: List[str],
         "pipeline_version": "faceproof/1.0.0",
         "snapshot_id": snapshot_id,
         "retrieval_timestamp": _now_z(),
+        "threshold": float(cfg.accept_at),
         "reason": reason,
         "match": None,
+        "channel_a": channel_a or {},
+        "channel_b": channel_b or {},
     }
+
+
+def _public_channel(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist search evidence without raw post text or local file paths."""
+    keep = ("accepted", "reason", "margin", "snapshot", "post_url", "post_uri",
+            "author_did", "author_handle", "score", "image_sha256", "image_phash",
+            "source_url", "subject")
+    # How the margin was measured is itself evidence: a reader of stage2.json
+    # must be able to see that the gate compared the winner against the nearest
+    # *different* identity (guide p.45) rather than against another photograph
+    # of the same person, and what the same-subject figure would have been.
+    decision_keys = ("margin_basis", "runner_up_subject", "margin_rank1_rank2")
+    out = {key: result[key] for key in keep if key in result}
+    out.update({key: result[key] for key in decision_keys if key in result})
+    hits = []
+    for rank, hit in enumerate(result.get("hits") or [], start=1):
+        row = {key: hit[key] for key in keep if key in hit}
+        row["rank"] = rank
+        hits.append(row)
+    out["hits"] = hits
+    return out
 
 
 def _write(run_path: Path, payload: Dict[str, Any]) -> Path:

@@ -1,0 +1,51 @@
+{
+  "schema": "faceproof.calibration.v1",
+  "measured_at": "2026-09-07T07:24:20Z",
+  "model_id": "insightface/buffalo_l@w600k_r50",
+  "pipeline_version": "faceproof/1.1.0",
+  "dataset": {
+    "path": "data\\calib",
+    "fingerprint": "104ab34c4a951caa66c3e18e1de0ae6c8e2e28bd59719b392399df2f65710081",
+    "n_subjects": 2,
+    "n_images": 6,
+    "n_skipped": 0
+  },
+  "genuine": {
+    "n": 6,
+    "mean": 0.5989,
+    "min": 0.5327,
+    "max": 0.6674,
+    "scores": [
+      0.5327,
+      0.5555,
+      0.6028,
+      0.6101,
+      0.6251,
+      0.6674
+    ]
+  },
+  "impostor": {
+    "n": 9,
+    "mean": 0.0315,
+    "min": -0.0407,
+    "max": 0.0667,
+    "scores": [
+      0.0667,
+      0.0663,
+      0.048,
+      0.0479,
+      0.0398,
+      0.0352,
+      0.0164,
+      0.0042,
+      -0.0407
+    ]
+  },
+  "rule": "accept_at = impostor_max + 0.03",
+  "suggested_accept_at": 0.0967,
+  "suggested_review_at": 0.0491,
+  "true_accept_rate": 1.0,
+  "false_accept_rate": 0.0,
+  "separation": 0.466,
+  "overlap_warning": false
+}

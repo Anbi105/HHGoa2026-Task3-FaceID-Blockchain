@@ -29,3 +29,13 @@ dist/
 .coverage
 htmlcov/
 .DS_Store
+
+# Local consenting corpus + held-out probe photos — real people, never commit:
+data/corpus/*/
+!data/corpus/README.md
+data/probe/
+# Reference clones of teammates' branches (untracked working copies):
+/person1/
+/person2/
+# Foundry download
+foundry.zip

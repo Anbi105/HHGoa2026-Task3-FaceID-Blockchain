@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceProof — Stage 1 · 2 · 3</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header>
+  <h1>FaceProof <span>· face probe → social discovery → on-chain attestation</span></h1>
+  <div class="badges" id="hdr-badges"></div>
+</header>
+
+<div class="wrap">
+
+  <!-- ══ left column ══════════════════════════════════════════════ -->
+  <aside>
+
+    <section class="card">
+      <h2>Controls</h2>
+      <div class="body">
+        <label class="field">Probe image
+          <input type="text" id="in-image" spellcheck="false">
+        </label>
+        <label class="field">Subject (consent id)
+          <input type="text" id="in-subject" value="alice" spellcheck="false">
+        </label>
+
+        <label class="toggle">
+          <input type="checkbox" id="opt-real" checked>
+          <span>Run real Stage&nbsp;2 <span class="hint">Person 2 channels + fusion</span></span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="opt-anchor">
+          <span>Anchor on-chain <span class="hint" id="anchor-hint"></span></span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="opt-tamper" checked>
+          <span>Tamper test <span class="hint">flip 1 char, expect DETECTED</span></span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="opt-demo">
+          <span>Allow synthetic Stage&nbsp;2 <span class="hint">labelled fixture, not a real search</span></span>
+        </label>
+
+        <div id="demo-warn"></div>
+
+        <div class="btn-row">
+          <button class="primary" id="btn-run">▶  Run full pipeline</button>
+        </div>
+        <div class="btn-row">
+          <button id="btn-verify">Re-verify</button>
+          <button id="btn-anchor">Anchor</button>
+          <button id="btn-tamper" class="danger">Tamper test</button>
+        </div>
+        <p class="note">Every button calls the same Python modules the CLI calls.
+          Nothing on this page computes a hash, a score or a proof.</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Consent <span class="sub" id="consent-count"></span></h2>
+      <div class="body" id="consent-body"></div>
+    </section>
+
+    <section class="card">
+      <h2>Calibration <span class="sub" id="calib-src"></span></h2>
+      <div class="body" id="calib-body"></div>
+    </section>
+
+    <section class="card">
+      <h2>Channel A corpus</h2>
+      <div class="body" id="corpus-body"></div>
+    </section>
+
+    <section class="card">
+      <h2>Runs <span class="sub" id="runs-count"></span></h2>
+      <div class="body"><div class="runs" id="runs-list"></div></div>
+    </section>
+
+  </aside>
+
+  <!-- ══ main column ══════════════════════════════════════════════ -->
+  <main>
+
+    <section class="card">
+      <h2>Pipeline <span class="sub" id="rail-sub"></span></h2>
+      <div class="rail" id="rail"></div>
+      <div style="padding:0 14px 14px" id="verdict"></div>
+    </section>
+
+    <section class="card" id="c-stage1">
+      <h2>Stage 1 · Face probe <span class="sub">Person 1 — InsightFace buffalo_l</span></h2>
+      <div class="body" id="stage1-body"><div class="empty">No run yet.</div></div>
+    </section>
+
+    <section class="card" id="c-stage2">
+      <h2>Stage 2 · Social discovery <span class="sub">Person 2 — Channel A + Channel B → fusion</span></h2>
+      <div class="body" id="stage2-body"><div class="empty">No run yet.</div></div>
+    </section>
+
+    <section class="card" id="c-stage3">
+      <h2>Stage 3 · Evidence bundle <span class="sub">8 groups → canonical JSON → Merkle root</span></h2>
+      <div class="body" id="stage3-body"><div class="empty">No run yet.</div></div>
+    </section>
+
+    <section class="card" id="c-merkle">
+      <h2>Merkle tree &amp; selective disclosure <span class="sub">depth 3 · sorted-pair keccak256</span></h2>
+      <div class="body" id="merkle-body"><div class="empty">No bundle yet.</div></div>
+    </section>
+
+    <section class="card" id="c-chain">
+      <h2>Blockchain anchor <span class="sub" id="chain-sub"></span></h2>
+      <div class="body" id="chain-body"><div class="empty">Not anchored.</div></div>
+    </section>
+
+    <section class="card" id="c-verify">
+      <h2>Independent re-verification</h2>
+      <div class="body" id="verify-body"><div class="empty">Nothing verified yet.</div></div>
+    </section>
+
+    <section class="card" id="c-tamper">
+      <h2>Tamper detection</h2>
+      <div class="body" id="tamper-body"><div class="empty">Not run.</div></div>
+    </section>
+
+    <section class="card">
+      <h2>Privacy posture</h2>
+      <div class="body" id="privacy-body"></div>
+    </section>
+
+    <section class="card">
+      <h2>Run artifacts <span class="sub" id="artifacts-sub"></span></h2>
+      <div class="body" id="artifacts-body"><div class="empty">No run selected.</div></div>
+    </section>
+
+    <section class="card">
+      <h2>Live log <span class="sub" id="log-sub">stdout from the real pipeline</span></h2>
+      <div class="console" id="console"></div>
+    </section>
+
+  </main>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

@@ -239,13 +239,34 @@ def test_bridge_single_channel_b_uses_b_record(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- #
 
 def test_accept_at_is_not_used_as_retrieval_timestamp():
+    """``accept_at`` is a cosine threshold (~0.1-0.6), never a time.
+
+    The threshold asserted here is ``cfg.accept_at`` rather than a literal:
+    once ``data/calibration.json`` exists the number in force is the *measured*
+    one, and hardcoding the 0.55 placeholder made this pass by coincidence.
+    """
+    from faceproof.config import cfg
+
     res = normalize(
         {"fusion_outcome": "SINGLE_CHANNEL_A", "accept_at": "0.55",
          "match": {"post_url": "https://x/y", "score": 0.9}},
         source="test",
     )
+    # the bug: "0.55" landing in a timestamp field
     assert res["retrieval_timestamp"] != "0.55"
-    assert res["match"]["threshold"] == q(0.55) or "0.55" in res["match"]["threshold"]
+    assert res["retrieval_timestamp"].endswith("Z")
+    # no threshold key was supplied, so the threshold in force is recorded
+    assert res["match"]["threshold"] == q(cfg.accept_at)
+
+
+def test_an_explicit_threshold_beats_the_configured_one():
+    """A payload that reports its own threshold is recorded verbatim."""
+    res = normalize(
+        {"fusion_outcome": "SINGLE_CHANNEL_A", "threshold": 0.5,
+         "match": {"post_url": "https://x/y", "score": 0.9}},
+        source="test",
+    )
+    assert res["match"]["threshold"] == q(0.5)
 
 
 # --------------------------------------------------------------------------- #

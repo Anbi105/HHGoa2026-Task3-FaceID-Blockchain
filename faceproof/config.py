@@ -13,7 +13,7 @@ import json
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
@@ -49,6 +49,32 @@ def _env_float(key: str, default: float) -> float:
     return float(_env(key, str(default)))
 
 
+def _calibrated_accept_at() -> Optional[float]:
+    """``suggested_accept_at`` from ``data/calibration.json``, if measured.
+
+    ``calibrate.py`` writes that file but nothing read it, so a team that did
+    the calibration work still ran the pipeline on the 0.55 placeholder and
+    the recording would cite a number the gate was not using (guide D3).
+    Person 2's config already resolved this the same way; this brings the
+    integrated config in line.  An explicit ``FACEPROOF_ACCEPT_AT`` still wins,
+    and a missing or malformed file falls back silently to the default.
+    """
+    path = Path(_env("DATA_DIR", str(_REPO_ROOT / "data"))) / "calibration.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))["suggested_accept_at"]
+        return float(value)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _accept_at_default() -> float:
+    explicit = os.environ.get("FACEPROOF_ACCEPT_AT")
+    if explicit is not None:
+        return float(explicit)
+    measured = _calibrated_accept_at()
+    return measured if measured is not None else 0.55
+
+
 def _env_int(key: str, default: int) -> int:
     return int(_env(key, str(default)))
 
@@ -72,7 +98,7 @@ class Config:
     )
 
     # ── Matching (§6) — set accept_at from calibrate.py, do NOT guess ──
-    accept_at: float = field(default_factory=lambda: _env_float("ACCEPT_AT", 0.55))
+    accept_at: float = field(default_factory=_accept_at_default)
     review_at: float = field(default_factory=lambda: _env_float("REVIEW_AT", 0.42))
     min_margin: float = field(default_factory=lambda: _env_float("MIN_MARGIN", 0.06))
     top_k: int = field(default_factory=lambda: _env_int("TOP_K", 10))

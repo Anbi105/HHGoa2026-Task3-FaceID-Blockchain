@@ -277,6 +277,72 @@ else:
 
 ---
 
+## Channel A corpus — local consenting photographs
+
+> **The demo does not use Bluesky data.** No member of this team has a Bluesky
+> account, and the one seeded public ingest that ran returned HTTP 504 from the
+> Bluesky CDN. Rather than fabricate accounts, posts or embeddings, Channel A is
+> built from **real photographs the subjects supplied with consent**. Nothing in
+> the corpus or in any bundle built from it claims a social-media origin.
+
+The Bluesky path (`run corpus --handles ...`) is unchanged and still works if a
+teammate has an account. The local path feeds the **same** index.
+
+### What is and is not substituted
+
+Only the *source of the records* changes. Everything that decides an identity is
+Person 2's unmodified code:
+
+| Step | Where it runs |
+|------|---------------|
+| detection, quality gate, ArcFace embedding, L2 normalisation | Person 2 `face.probe_image` |
+| FAISS `IndexIDMap2(IndexFlatIP(512))`, sidecar, snapshot | Person 2 `index.build` |
+| cosine top-k, runner-up, margin, accept/abstain | Person 2 `index.search` |
+| channel fusion | Person 2 `fuse.fuse` |
+| *record production only* | `faceproof/local_corpus.py` (new) |
+
+There is **no** filename matching, image-equality shortcut, hardcoded identity or
+synthetic embedding anywhere in that path. A photograph in which InsightFace
+finds no usable face is skipped and counted — the gap between `n_images` and
+`n_faces` is reported, never padded.
+
+### Layout
+
+```
+data/corpus/<subject>/photo1.jpg      # directory name is the subject label
+data/probe/target_probe.jpg           # a DIFFERENT photo of the target
+```
+
+Both are gitignored. See [`data/corpus/README.md`](data/corpus/README.md).
+
+**Image requirement:** the detected face must be **at least 90 px** (`min_face_px`)
+and score `det_score >= 0.62`. Low-resolution snapshots are rejected — in
+practice a photo where the face fills a reasonable part of a >= 600 px image.
+
+### Build and inspect
+
+```bash
+python -m faceproof.run corpus-local --root data/corpus
+python -m faceproof.run corpus-local --root data/corpus --exclude data/corpus/alice/photo1.jpg
+python -m faceproof.run index-stats
+```
+
+`--exclude` holds a photograph out of the gallery so it can be used as the probe.
+That matters: probing with a file that is itself indexed is a byte-identical
+self-lookup and proves nothing about recognition.
+`faceproof.local_corpus.probe_is_in_index()` re-checks this by image SHA-256.
+
+### Provenance recorded for a local match
+
+| field | value |
+|---|---|
+| `platform`, `source_type` | `local-consenting-corpus` |
+| `author_did` | `did:local:<subject>` |
+| `post_url`, `post_uri` | `local://corpus/<subject>/<filename>` |
+| `text_sha256` | SHA-256 of the empty string (there is no post text) |
+
+---
+
 ## Calibration
 
 > [!CAUTION]
@@ -599,6 +665,102 @@ No Merkle root, no anchor, no false-positive attestation. Quality-gate rejection
 
 ---
 
+### Two spec-conformance fixes in the Channel A path
+
+Both come straight from the guide and neither changes a threshold.
+
+**1. Gallery admission follows the guide, not the probe gate (guide p.20).**
+The guide filters *corpus* faces on detector confidence alone
+(`if f.det_score < 0.55: continue`). Blur, face-size and secondary-face checks
+belong to the *probe* (p.15) — they stop a bad **query** producing a confidently
+wrong answer. Person 2's `index.build` reuses `probe_image`, so the strict probe
+gate was applied to gallery images too and soft or small photographs could never
+be indexed at all. `local_corpus.gallery_config()` passes the guide's gallery
+criterion into `probe_image(path, config)` — which takes its thresholds from the
+config it is handed — so Person 2's module is unmodified and **Stage 1's probe
+gate is completely unchanged** (`det >= 0.62`, `face >= 90px`, `blur >= 45.0`).
+
+**2. The margin is measured against the nearest *different* identity (guide p.45).**
+The guide's own failure-modes table:
+
+> *Top-1 is correct but the margin gate rejects it* — several images of the same
+> person in the corpus, rank 2 is also them → **compute margin against the best
+> hit from a different author, not rank 2 outright.**
+
+`index.search` uses `hits[0] - hits[1]` unconditionally, so a gallery holding two
+photographs of one subject makes a *correct* identification look ambiguous. On the
+demo run the winner and the runner-up were both `person_b` (0.625082 / 0.602771),
+collapsing the margin to 0.022 and abstaining on `ambiguous_neighbourhood`. Measured
+against the nearest different identity (`person_a`, 0.005108) the margin is 0.619975.
+
+`accept_at` (0.0967, measured) and `min_margin` (0.06) are untouched. `stage2.json`
+records **both** figures — `margin_basis`, `runner_up_subject` and the original
+`margin_rank1_rank2` — so the change is auditable rather than silent.
+
+---
+
+## Demo runbook (local, end to end)
+
+Anvil keeps chain state **in memory**, so the registry must be redeployed after
+every `anvil` restart. `.env` points `CHAIN`/`RPC_URL`/`REGISTRY_ADDRESS` at the
+historical Polygon Amoy deployment, so a chain command run *without* the demo
+environment silently talks to Amoy and fails with a confusing "contract not
+deployed". `scripts/demo-anvil.ps1` shadows those three values for the local run
+and never edits `.env`, so no testnet POL can be spent by accident.
+
+> **PowerShell may refuse to run the script** ("running scripts is disabled on
+> this system"). Either start the shell as `powershell -ExecutionPolicy Bypass`,
+> or allow local scripts once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
+```powershell
+# 0 - local chain, in its own window, left running
+anvil
+
+# 1 - deploy the registry (no private key is passed: Anvil signs unlocked)
+.\.venv\Scripts\python.exe -m faceproof.run deploy --rpc http://127.0.0.1:8545
+
+# 2 - demo environment. Reads the address from Foundry's broadcast record and
+#     self-checks the node, the contract code and the anchor count.
+. .\scripts\demo-anvil.ps1
+
+# 3 - build Channel A from consenting photographs, holding out the probe
+.\.venv\Scripts\python.exe -m faceproof.run corpus-local --root data/corpus data/calib `
+    --exclude data/calib/<subject>/<probe>.jpg
+.\.venv\Scripts\python.exe -m faceproof.run index-stats
+
+# 4 - consent, then Stage 1
+.\.venv\Scripts\python.exe -m faceproof.cli consent grant <subject>
+.\.venv\Scripts\python.exe -m faceproof.run probe --img <held-out photo> --subject <subject>
+
+# 5 - Stage 2, then Stage 3 + anchor + verify + tamper.
+#     Omit --run-dir and both commands act on the newest run automatically,
+#     so there is no run id to copy on camera.
+.\.venv\Scripts\python.exe -m faceproof.run stage2
+.\.venv\Scripts\python.exe -m faceproof.run search --anchor
+
+# 6 - dashboard
+.\.venv\Scripts\python.exe -m faceproof.run ui --port 8767
+```
+
+Re-verify or re-tamper any earlier run at any time (these need only the bundle
+and the chain, not the original photographs):
+
+```powershell
+.\.venv\Scripts\python.exe -m faceproof.run verify --run-dir outun-<id> --chain
+.\.venv\Scripts\python.exe -m faceproof.run tamper --run-dir outun-<id>
+```
+
+If Stage 2 returns **ABSTAIN**, that is a real result: the top cosine did not
+clear `accept_at`. Stage 3 then refuses to build a bundle and writes only
+`abstain.json`. Do not raise the threshold to turn it into a match.
+
+`run index-stats` warns when the index is **stale** - i.e. photographs it was
+built from are no longer on disk. Rebuild with `corpus-local` before recording,
+otherwise the snapshot on camera describes a gallery that can no longer be
+re-derived.
+
+---
+
 ## Tests
 
 ### Full suite
@@ -693,16 +855,18 @@ With a local node running (`make anvil` in another terminal), `tests/test_chain.
 
 ## Limitations
 
+- **Channel B is not implemented.** Person 2's `channel_b.discover` is a three-line stub that returns `{"accepted": false, "reason": "no_SERPAPI_KEY_or_ephemeral_host"}` unconditionally — the reason string is misleading, because it is returned **whether or not** `SERPAPI_KEY` is set (a key is present in this checkout and changes nothing). Implementing it would mean uploading a real person's face to a third-party reverse-image API, which contradicts the project's stated privacy posture ("no probe image ever leaves the host"), so it is deliberately left off. Fusion handles the single-channel case correctly and reports `channel_b:no_SERPAPI_KEY_or_ephemeral_host` in `channels_used`.
+
 Stage-3-specific constraints (the pipeline's broader limits are in **[LIMITATIONS.md](LIMITATIONS.md)**):
 
 - **Polygon Amoy anchor is live but singular.** `EvidenceRegistry` is deployed at `0xeE0efb2a3D75f1933f171dE8e8D9Dd14903170d3` and exactly one root (anchor id `0`) has been anchored — a demonstration on the synthetic Stage 2 fixture, not a run over real discovery output. The Amoy code path shares `chain.py` with Anvil; the local Anvil path is still what the integration tests exercise on every commit.
 - **The ABI artifact is generated, not committed.** `contracts/out/` is gitignored, so `chain.py` needs `forge build` (or `make deploy`) to run once before any chain operation. Standard for Foundry projects; the Makefile targets and CI handle it.
 - **Stage 3 consumes the discovery result through a read-only adapter.** When no Stage 2 result file is present in the run directory, `stage2_adapter` falls back to a **clearly labelled synthetic fixture** (`source: "synthetic-stub"`, `channels_used: ["channel_a:synthetic-stub"]`) so the attestation path is demonstrable in isolation. It is unmistakable in the manifest and the bundle provenance when no real discovery took place.
-- **Stage 2 is wired in via `faceproof/stage2_bridge.py`, not a code merge.** Person 2's package is also named `faceproof` with an older, incompatible implementation, so the bridge loads only their dependency-free real functions (`fuse`, `channel_b`, `index.search`) by file path and emits `stage2.json`. This repo ships **no** FAISS corpus/index (Person 2 deliberately did not fabricate one — see [`data/index/README.md`](data/index/README.md)), so `stage2` / `search --real-stage2` in a clean clone demonstrates the **genuine abstain** path; the positive match path uses the synthetic fixture above. See [`application.md`](application.md).
-- **`data/calibration.json` is not committed.** `faceproof/calibrate.py` generates it from real consenting photos in `data/calib/<subject_id>/` (gitignored, absent — see [`data/calib/README.md`](data/calib/README.md)); until then `accept_at = 0.55` applies with a `make config` warning. It must be produced by a teammate with real calibration images — never fabricated.
-- **A live face probe needs model deps not in the test `.venv`.** `insightface==0.7.3` + `onnxruntime` + a one-time ~330 MB `buffalo_l` download are required for Stage 1 detection, calibration, and the blurry / group-photo gate fixtures (`scripts/make_demo_variants.py`). The `.venv` here runs the full **mocked** suite; it has no InsightFace. `requirements.lock.txt` (a py3.14 / numpy-2 freeze) also does not match that `.venv` — `pip install -e ".[dev]"` installs the tested set; the two dependency files should be reconciled before submission.
+- **Stage 2 is wired in via `faceproof/stage2_bridge.py`, not a code merge.** Person 2's package is also named `faceproof` with an older, incompatible implementation, so the bridge loads only their dependency-free real functions (`fuse`, `channel_b`, `index.search`) by file path and emits `stage2.json`. This repo ships **no** FAISS corpus/index (it is gitignored — see [`data/index/README.md`](data/index/README.md)), so `stage2` / `search --real-stage2` in a clean clone demonstrates the **genuine abstain** path. Locally the index is built from consenting photographs via `run corpus-local` (see [Channel A corpus](#channel-a-corpus--local-consenting-photographs)), and the **positive-match path is a real search**: a held-out photograph of a consenting subject is matched against a 4-face / 2-subject index, accepted on a measured threshold, and anchored. The labelled synthetic fixture (`--demo`) remains available for exercising Stage 3 in a clean clone that has no corpus, and is never reached unless that flag is passed. See [`application.md`](application.md).
+- **Calibration has been measured, on a small sample.** `data/calibration.json` was produced by `faceproof/calibrate.py` from real consenting photos in `data/calib/<subject_id>/` (the photos are gitignored), and `accept_at = 0.0967` is the value now in force — `config.py` reads the file, so the number cited on camera is the number the gate uses. It rests on **2 subjects / 6 images / 9 impostor pairs**, so the impostor maximum it is derived from is a weak upper bound; treat the threshold as provisional and re-measure with more subjects before drawing any conclusion about accuracy.
+- **A live face probe needs model deps not in the test `.venv`.** `insightface` + `onnxruntime` + a one-time ~330 MB `buffalo_l` download are required (on Windows use `insightface==1.0.1`, which ships a pure-Python wheel; `0.7.3` is sdist-only and needs MSVC C++ build tools) for Stage 1 detection, calibration and the Channel A index build. This checkout's `.venv` **does** have them (insightface 1.0.1, onnxruntime 1.29.0, faiss 1.15.0, buffalo_l cached), so the runs recorded here are real, not mocked. `pip install -e ".[dev]"` installs the tested set.
 - **Anvil deployment addresses are deterministic and disposable.** Any address or transaction hash shown for a local run comes from a throwaway chain and regenerates on every run.
-- **Two tests assert POSIX-only file semantics** and fail on Windows (see [Tests](#tests)); both pass on the Linux CI.
+- **One test asserts POSIX-only file semantics** and fails on Windows: `tests/test_consent.py::TestStore::test_file_permissions_are_owner_only` expects mode `600` after `chmod`, and Windows reports `666`. The consent store is still written 0600-then-replace; only the assertion is unportable. It passes on the Linux CI.
 
 ---
 

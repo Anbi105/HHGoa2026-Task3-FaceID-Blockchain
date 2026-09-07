@@ -7,6 +7,8 @@ the tamper demo around that existing interface.
 
     python -m faceproof.run banner
     python -m faceproof.run index-stats
+    python -m faceproof.run corpus --handles alice.bsky.social   # Channel A corpus (Bluesky)
+    python -m faceproof.run corpus-local --root data/corpus      # Channel A corpus (local photos)
     python -m faceproof.run probe   --img data/demo/synthetic_face.jpg --subject alice
     python -m faceproof.run stage2  --run-dir out/run-<id>            # Person 2 discovery -> stage2.json
     python -m faceproof.run search  --run-dir out/run-<id>            # or --img/--subject
@@ -30,6 +32,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from rich.console import Console
+from rich.table import Table
 
 from faceproof.bundle import (
     BUNDLE_FILENAME,
@@ -40,7 +43,7 @@ from faceproof.bundle import (
     write_abstain,
 )
 from faceproof.config import banner, cfg
-from faceproof.handoff import load_record
+from faceproof.handoff import PROBE_FILENAME, load_record
 from faceproof.manifest import Manifest, new_run_id
 from faceproof.stage2_adapter import load_stage2
 from faceproof.verify import tamper_demonstration, verify_run
@@ -48,6 +51,7 @@ from faceproof.verify import tamper_demonstration, verify_run
 console = Console()
 _CONTRACTS_DIR = Path(__file__).resolve().parent.parent / "contracts"
 _ANVIL_ACCT0_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+_ANVIL_ACCT0_ADDR = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 
 
 # ---------------------------------------------------------------------------
@@ -56,8 +60,16 @@ _ANVIL_ACCT0_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4
 
 
 def _latest_run_dir() -> Optional[Path]:
+    """Newest run directory that actually carries a Stage 1 handoff.
+
+    A run that dies inside Stage 1 - a missing model stack, a quality-gate
+    crash - still leaves ``out/run-<id>/`` behind with only ``manifest.jsonl``
+    in it.  Picking purely by mtime therefore selects that corpse, and every
+    downstream command fails with a confusing "probe.json does not exist"
+    instead of pointing at the run that failed.  Require the handoff.
+    """
     runs = sorted(cfg.out_dir.glob("run-*"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return runs[0] if runs else None
+    return next((r for r in runs if (r / PROBE_FILENAME).exists()), None)
 
 
 def _resolve_run_dir(run_dir: Optional[str]) -> Path:
@@ -65,7 +77,23 @@ def _resolve_run_dir(run_dir: Optional[str]) -> Path:
         return Path(run_dir)
     latest = _latest_run_dir()
     if latest is None:
-        console.print("[red]no run directory given and none found under out/[/red]")
+        stale = sorted(cfg.out_dir.glob("run-*"), key=lambda p: p.stat().st_mtime, reverse=True)
+        console.print(
+            f"[red]no completed run under out/ - none contains {PROBE_FILENAME}.[/red]"
+        )
+        if stale:
+            plural = "y" if len(stale) == 1 else "ies"
+            console.print(
+                f"[yellow]{len(stale)} run director{plural} exist but Stage 1 never "
+                f"finished; newest is {stale[0]}.[/yellow]"
+            )
+            console.print(
+                "[dim]Check its manifest.jsonl for where it stopped, then re-run "
+                "Stage 1:[/dim]"
+            )
+            console.print(
+                "[dim]  python -m faceproof.cli probe <image> --subject <id>[/dim]"
+            )
         raise SystemExit(3)
     console.print(f"[dim]using latest run: {latest}[/dim]")
     return latest
@@ -94,12 +122,124 @@ def cmd_banner(_: argparse.Namespace) -> int:
 
 
 def cmd_index_stats(_: argparse.Namespace) -> int:
-    snap = cfg.data_dir / "index" / "snapshot.json"
-    if snap.exists():
-        console.print(snap.read_text(encoding="utf-8"))
-    else:
-        console.print(f"[yellow]no index snapshot at {snap}[/yellow]")
-        console.print("Stage 2 (Person 2) owns index construction; Stage 3 only reads its id.")
+    """Report the REAL composition of the index, read back from disk."""
+    from faceproof.local_corpus import stats as index_stats
+
+    snap = index_stats()
+    if snap is None:
+        console.print(f"[yellow]no index snapshot at {cfg.data_dir / 'index' / 'snapshot.json'}[/yellow]")
+        console.print("Build one:  python -m faceproof.run corpus-local --root data/corpus")
+        return 0
+
+    table = Table(title="Channel A index", title_style="bold cyan")
+    table.add_column("field"); table.add_column("value")
+    table.add_row("snapshot_id", str(snap.get("snapshot_id", "")))
+    table.add_row("n_faces", str(snap.get("n_faces", "")))
+    table.add_row("n_images", str(snap.get("n_images", "")))
+    table.add_row("n_subjects", str(snap.get("n_subjects", "")))
+    table.add_row("n_authors", str(snap.get("n_authors", "")))
+    table.add_row("dim", str(snap.get("dim") or "unknown"))
+    table.add_row("model_id", str(snap.get("model_id", "")))
+    table.add_row("source_types", ", ".join(snap.get("source_types", []) or ["-"]))
+    console.print(table)
+
+    if snap.get("stale"):
+        console.print(
+            f"[bold yellow]WARNING: this index is stale - "
+            f"{snap['files_missing']} of its source image(s) no longer exist "
+            f"on disk (e.g. {snap['missing_examples'][0]}).[/bold yellow]"
+        )
+        console.print(
+            "[yellow]It is left over from an earlier build and its provenance "
+            "cannot be re-checked. Rebuild before demonstrating:[/yellow]"
+        )
+        console.print("[yellow]  python -m faceproof.run corpus-local --root data/corpus[/yellow]")
+
+    subjects = snap.get("subjects") or {}
+    if subjects:
+        st = Table(title="faces per subject")
+        st.add_column("subject"); st.add_column("faces", justify="right")
+        for name, n in sorted(subjects.items()):
+            st.add_row(str(name), str(n))
+        console.print(st)
+    return 0
+
+
+def cmd_corpus_local(args: argparse.Namespace) -> int:
+    """Build the Channel A index from local consenting photographs."""
+    from faceproof.local_corpus import CorpusError as _CE, build
+
+    try:
+        summary = build(args.root, exclude=args.exclude or [],
+                        subjects=args.subjects or None,
+                        gallery_det=args.gallery_det,
+                        log=lambda *a: console.print(*a))
+    except _CE as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        return 2
+    console.print(f"[green]index built[/green]  snapshot={summary['snapshot_id']}")
+    return 0
+
+
+def cmd_corpus(args: argparse.Namespace) -> int:
+    """Build the Channel A corpus: ingest -> fetch -> FAISS index.
+
+    Ingestion and indexing are Person 2's real modules; only the image fetch
+    between them is integration-side (see faceproof/stage2_corpus.py).
+    """
+    from faceproof.stage2_corpus import (
+        CorpusError,
+        build_index,
+        fetch_images,
+        ingest,
+        raw_path,
+    )
+
+    try:
+        if not args.skip_ingest:
+            if not args.handles:
+                console.print(
+                    "[red]--handles is required (or pass --skip-ingest to reuse "
+                    "an existing raw.jsonl).[/red]"
+                )
+                console.print(
+                    "[dim]Use only handles whose owners have consented to being "
+                    "indexed. Public Bluesky AppView; no API key needed.[/dim]"
+                )
+                return 3
+            console.rule("Stage 2 corpus - ingest (Person 2, public Bluesky)")
+            n = ingest(args.handles)
+            console.print(f"[green]ingested[/green] {n} image records -> {raw_path()}")
+            if n == 0:
+                console.print(
+                    "[yellow]no records: those handles have no public posts with "
+                    "images, or the API refused. Nothing is fabricated.[/yellow]"
+                )
+                return 1
+
+        console.rule("Stage 2 corpus - fetch images (integration glue)")
+        records, stats = fetch_images(limit=args.limit, log=console.print)
+        console.print(
+            f"  rows={stats['rows']}  fetched={stats['fetched']}  "
+            f"duplicate={stats['duplicate']}  failed={stats['failed']}  "
+            f"too_small={stats['too_small']}"
+        )
+        if not records:
+            console.print("[yellow]no images fetched - cannot build an index.[/yellow]")
+            return 1
+
+        console.rule("Stage 2 corpus - build index (Person 2)")
+        summary = build_index(records)
+    except CorpusError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 3
+
+    console.print(json.dumps(summary, indent=2, sort_keys=True))
+    console.print(
+        f"[green]index built[/green]  faces={summary.get('n_faces')}  "
+        f"images={summary.get('n_images')}  authors={summary.get('n_authors')}"
+    )
+    console.print("[dim]Channel A is now live; `run stage2` will query it.[/dim]")
     return 0
 
 
@@ -220,9 +360,23 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 
 def cmd_anchor(args: argparse.Namespace) -> int:
+    """Anchor a run's Merkle root.  Refusals are reported, not raised.
+
+    ``anchor()`` deliberately refuses three things - an abstaining run with no
+    bundle, a bundle whose recomputed root disagrees with the stored one, and a
+    bundle whose verdict is ABSTAIN.  Those are correct outcomes, so they read
+    as a message and a non-zero exit rather than as a stack trace.
+    """
     from faceproof.anchor import anchor as _anchor
 
-    _anchor(_resolve_run_dir(args.run_dir))
+    try:
+        _anchor(_resolve_run_dir(args.run_dir))
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[yellow]anchor refused: {exc}[/yellow]")
+        return 1
+    except Exception as exc:
+        console.print(f"[bold red]anchor FAILED: {exc}[/bold red]")
+        return 1
     return 0
 
 
@@ -266,30 +420,63 @@ def _forge(*forge_args: str, env_extra: Optional[dict] = None) -> int:
         return 127
 
 
+def cmd_ui(args: argparse.Namespace) -> int:
+    """Serve the local dashboard over the real pipeline (loopback only)."""
+    from faceproof.ui.server import serve
+
+    return serve(port=args.port, open_browser=not args.no_browser)
+
+
 def cmd_deploy(args: argparse.Namespace) -> int:
-    """Deploy EvidenceRegistry.  The key is passed to forge via the
-    ``ETH_PRIVATE_KEY`` environment variable, not ``--private-key`` on the
-    command line: argv is world-readable through ``ps`` for the lifetime of
-    the process and lands in shell history.
+    """Deploy EvidenceRegistry without ever placing a key in argv.
+
+    ``forge script`` does not read ``ETH_PRIVATE_KEY`` (verified against the
+    Foundry build in this checkout: it still reports "You seem to be using
+    Foundry's default sender"), so the previous env-var handoff silently did
+    nothing and every deploy failed.  argv is the wrong place to fix that -
+    it is world-readable via ``ps`` and lands in shell history - so:
+
+    * against a local node, use ``--unlocked --sender``: Anvil signs for its
+      own dev accounts, and no key exists anywhere in the command;
+    * against a real chain, require a Foundry keystore (``--account``), which
+      prompts for the passphrase on a tty instead of exposing the key.
+
+    ``PRIVATE_KEY`` from ``.env`` is deliberately NOT forwarded to forge.
     """
     rpc = args.rpc or "http://127.0.0.1:8545"
-    # precedence: explicit flag > PRIVATE_KEY in the environment/.env > the
-    # world-known Anvil dev account
-    key = args.private_key or os.environ.get("PRIVATE_KEY") or _ANVIL_ACCT0_KEY
-
-    if args.private_key:
-        console.print(
-            "[yellow]--private-key puts the key in argv (visible to `ps`).[/yellow] "
-            "Prefer PRIVATE_KEY in .env, or a Foundry keystore."
-        )
-    if key != _ANVIL_ACCT0_KEY:
-        console.print("[dim]deploying with a non-Anvil key (value not shown)[/dim]")
+    local = any(h in rpc for h in ("127.0.0.1", "localhost", "0.0.0.0", "[::1]"))
 
     _forge("build")
+
+    if local:
+        console.print(f"[dim]local node: deploying unlocked as {_ANVIL_ACCT0_ADDR}[/dim]")
+        return _forge(
+            "script", "script/Deploy.s.sol:DeployScript",
+            "--rpc-url", rpc, "--broadcast",
+            "--unlocked", "--sender", _ANVIL_ACCT0_ADDR,
+        )
+
+    account = args.account or os.environ.get("FOUNDRY_ACCOUNT")
+    if not account:
+        console.print(
+            "[bold red]refusing to deploy to a non-local chain without a "
+            "keystore.[/bold red]"
+        )
+        console.print(
+            "Passing a private key on the command line exposes it via `ps` "
+            "and shell history. Import it once, then deploy:"
+        )
+        console.print("  cast wallet import deployer --interactive")
+        console.print(
+            "  python -m faceproof.run deploy --rpc <url> --account deployer"
+        )
+        return 2
+
+    console.print(f"[dim]deploying with keystore account {account!r} "
+                  f"(passphrase prompted; key never in argv)[/dim]")
     return _forge(
         "script", "script/Deploy.s.sol:DeployScript",
-        "--rpc-url", rpc, "--broadcast",
-        env_extra={"ETH_PRIVATE_KEY": key},
+        "--rpc-url", rpc, "--broadcast", "--account", account,
     )
 
 
@@ -357,6 +544,25 @@ def build_parser() -> argparse.ArgumentParser:
     with_common(sub.add_parser("banner", help="print the public pipeline config"))
     with_common(sub.add_parser("index-stats", help="print the index snapshot id/stats"))
     with_common(sub.add_parser("probe", help="Stage 1 probe (delegates to faceproof.cli)"), img=True)
+    lp = sub.add_parser("corpus-local",
+                        help="build the Channel A index from local consenting photos")
+    lp.add_argument("--root", nargs="+", default=["data/corpus"],
+                    help="one or more corpus roots containing <subject>/*.jpg")
+    lp.add_argument("--gallery-det", type=float, default=0.55,
+                    help="gallery admission det_score (guide p.20 default 0.55); "
+                         "the Stage 1 probe gate is separate and unchanged")
+    lp.add_argument("--exclude", nargs="*", default=[],
+                    help="image paths to hold out (use for the probe photo)")
+    lp.add_argument("--subjects", nargs="*", default=[],
+                    help="only index these subject directories")
+    with_common(lp)
+    cp = sub.add_parser("corpus", help="build the Channel A corpus (ingest -> fetch -> FAISS)")
+    cp.add_argument("--handles", nargs="*", default=[],
+                    help="consenting Bluesky handles to ingest, e.g. alice.bsky.social")
+    cp.add_argument("--skip-ingest", dest="skip_ingest", action="store_true",
+                    help="reuse an existing data/index/raw.jsonl")
+    cp.add_argument("--limit", type=int, default=None,
+                    help="cap how many images are fetched and indexed")
     with_common(sub.add_parser("stage2", help="Person 2 discovery/fusion -> stage2.json"), run_dir=True)
     with_common(sub.add_parser("search", help="assemble the evidence bundle"),
                 img=True, run_dir=True, anchor=True, real_stage2=True, demo=True)
@@ -367,9 +573,15 @@ def build_parser() -> argparse.ArgumentParser:
     fp = with_common(sub.add_parser("forget", help="revoke consent, destroy the salt"))
     fp.add_argument("--subject", "-s", default="alice")
     dp = with_common(sub.add_parser("deploy", help="forge script Deploy.s.sol"))
+    dp.add_argument("--account", default=None,
+                    help="Foundry keystore account name (required off-localhost)")
     dp.add_argument("--rpc", default=None)
     dp.add_argument("--private-key", dest="private_key", default=None)
     with_common(sub.add_parser("anvil", help="start a local anvil node"))
+    up = with_common(sub.add_parser("ui", help="serve the local dashboard (127.0.0.1)"))
+    up.add_argument("--port", type=int, default=8765)
+    up.add_argument("--no-browser", action="store_true",
+                    help="do not open a browser window")
     with_common(sub.add_parser("demo", help="banner -> search -> verify"),
                 img=True, run_dir=True, anchor=True, real_stage2=True, demo=True)
     return p
@@ -378,7 +590,9 @@ def build_parser() -> argparse.ArgumentParser:
 _DISPATCH = {
     "banner": cmd_banner,
     "index-stats": cmd_index_stats,
+        "corpus-local": cmd_corpus_local,
     "probe": cmd_probe,
+    "corpus": cmd_corpus,
     "stage2": cmd_stage2,
     "search": cmd_search,
     "anchor": cmd_anchor,
@@ -388,6 +602,7 @@ _DISPATCH = {
     "forget": cmd_forget,
     "deploy": cmd_deploy,
     "anvil": cmd_anvil,
+        "ui": cmd_ui,
     "demo": cmd_demo,
 }
 

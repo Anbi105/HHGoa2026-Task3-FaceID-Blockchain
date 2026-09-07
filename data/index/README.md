@@ -25,24 +25,34 @@ teammates plus public accounts you choose), never scraped or fabricated.
 3. Network access to the public Bluesky AppView (no key required).
 4. A list of consenting Bluesky handles.
 
-## Build it (Person 2's real modules)
+> **The fetch step is now implemented** (integration-side, additive).
+> `faceproof.index.build(records, config)` requires each record to carry a
+> `local_image` path, but `faceproof.ingest_bsky` only records an `image_url` --
+> nothing on the `person2` branch downloaded it, so `build` could never run.
+> `faceproof/stage2_corpus.py` supplies exactly that step and nothing else:
+> ingestion stays Person 2's `ingest_bsky.ingest`, and detection/embedding/FAISS
+> stay Person 2's `index.build`. It also loads their tree as a real package so
+> their own `from .face import probe_image` resolves.
+>
+> Each fetched row gains `local_image`, `image_sha256`, `image_phash` and
+> `text_sha256` -- the evidence fields the Stage 3 bundle has slots for. Images
+> that fail to download are counted and skipped, never replaced with
+> placeholder data.
+
+## Build it (one command)
 
 ```bash
-# 1. ingest public posts with images  ->  data/index/raw.jsonl
-python -m faceproof.ingest_bsky --handles alice.bsky.social bob.bsky.social
-
-# 2. re-fetch each raw.jsonl image to a local path, then:
-#    faceproof.index.build(records, config)   ->  faiss.bin + sidecar.jsonl + snapshot.json
-python -m faceproof.index
+python -m faceproof.run corpus --handles alice.bsky.social bob.bsky.social
 ```
 
-> **Known gap in Person 2's Stage 2:** `faceproof.index.build(records, config)`
-> expects each record to carry a `local_image` path (a re-fetched file),
-> but `faceproof.ingest_bsky` writes only `image_url`. The fetch step
-> between ingest and index is not implemented on the `person2` branch (the
-> guide's reference `index.py` does it inline). Supply that fetch step, or
-> use the guide's `index.py`, before `build()` will run. This is Person 2's
-> to close — it is not patched here.
+That runs ingest -> fetch -> index and prints the snapshot. To rebuild from an
+existing `raw.jsonl` without re-ingesting:
+
+```bash
+python -m faceproof.run corpus --skip-ingest
+```
+
+`--limit N` caps how many images are fetched and indexed.
 
 ## After the index exists
 
