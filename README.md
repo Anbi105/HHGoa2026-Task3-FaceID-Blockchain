@@ -9,9 +9,9 @@
 <br/>
 
 [![tests](https://github.com/Anbi105/HHGoa2026-Task3-FaceID-Blockchain/actions/workflows/tests.yml/badge.svg?branch=person3-blockchain)](https://github.com/Anbi105/HHGoa2026-Task3-FaceID-Blockchain/actions/workflows/tests.yml)
-[![coverage](https://img.shields.io/badge/coverage-97%25-3fb950?labelColor=1f2328)](#tests)
-[![python tests](https://img.shields.io/badge/pytest-221-3fb950?labelColor=1f2328)](#tests)
-[![foundry](https://img.shields.io/badge/forge_test-9%20passing-3fb950?labelColor=1f2328)](#foundry-tests)
+[![coverage](https://img.shields.io/badge/coverage-93%25_core_·_68%25_all-d29922?labelColor=1f2328)](#tests)
+[![python tests](https://img.shields.io/badge/pytest-305-3fb950?labelColor=1f2328)](#tests)
+[![foundry](https://img.shields.io/badge/forge_test-10%20passing-3fb950?labelColor=1f2328)](#foundry-tests)
 [![solidity](https://img.shields.io/badge/solidity-0.8.24-363636?logo=solidity&logoColor=white&labelColor=1f2328)](contracts/src/EvidenceRegistry.sol)
 [![python](https://img.shields.io/badge/python-3.11%20|%203.12-3776AB?logo=python&logoColor=white&labelColor=1f2328)](pyproject.toml)
 [![stage](https://img.shields.io/badge/stage_3-attestation-8250df?labelColor=1f2328)](#stage-3--blockchain-attestation)
@@ -75,22 +75,36 @@ make demo    # runs exactly the sequence above (Stage 1)
 
 ### Clone and install
 
+> [!IMPORTANT]
+> **Build the venv with Python 3.11 or 3.12 explicitly — not bare `python3`.**
+> `pyproject.toml` declares `requires-python = ">=3.11,<3.13"`, so on a machine
+> whose `python3` is newer the install fails with
+> `Package 'faceproof' requires a different Python: 3.14.x not in '<3.13,>=3.11'`.
+> Check with `python3 --version` before creating the venv, and name the
+> interpreter version explicitly if it is out of range.
+
 ```bash
 git clone https://github.com/Anbi105/HHGoa2026-Task3-FaceID-Blockchain.git
 cd HHGoa2026-Task3-FaceID-Blockchain
-python -m venv .venv
+
+python3 --version                      # must report 3.11.x or 3.12.x
+python3 -m venv .venv                  # if it does not, install 3.12 and use it:
+                                       #   macOS:  brew install python@3.12
+                                       #           /opt/homebrew/bin/python3.12 -m venv .venv
+                                       #   Ubuntu: sudo apt install python3.12-venv
+                                       #           python3.12 -m venv .venv
+```
+
+**Linux / macOS / WSL** — the Makefile hard-codes `.venv/bin/python`, so install into that venv and there is no need to activate it:
+
+```bash
+.venv/bin/pip install -e ".[dev]"
 ```
 
 **Windows (PowerShell or Git Bash)** — activation is unreliable, so call the interpreter directly:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-```
-
-**Linux / macOS / WSL:**
-
-```bash
-source .venv/bin/activate && pip install -e ".[dev]"
 ```
 
 `[dev]` installs everything — the Stage 1 model stack, the Stage 2 index and the
@@ -109,8 +123,29 @@ numpy 1.26.4 publishes no cp313 wheel — so 3.13 is out of range for `[probe]`.
 
 `insightface` and `stringzilla` ship no Windows wheels and build from source, so
 `[probe]` / `[dev]` on Windows also needs [MSVC C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/).
-Linux and macOS have a toolchain already. For the smart-contract half you also
-need [Foundry](https://getfoundry.sh) (`forge`, `anvil`) on your `PATH`.
+Linux and macOS have a toolchain already.
+
+**Foundry** is required for the smart-contract half (`make deploy`, `make forge-test`,
+`make anchor`, and any `--chain` verification). Install it and make sure `forge`,
+`anvil` and `cast` are on your `PATH`:
+
+```bash
+brew install foundry            # macOS
+curl -L https://foundry.paradigm.xyz | bash && foundryup    # Linux / WSL
+forge --version && anvil --version
+```
+
+Everything except the chain steps works without it — the Python suite, the probe,
+the corpus build and local (non-`--chain`) verification all run Foundry-free.
+
+### Download the model weights
+
+Stage 1 needs the InsightFace `buffalo_l` bundle (~330 MB, one time). Do this
+before any probe, or the first run pays the download:
+
+```bash
+make setup
+```
 
 ### Run the tests
 
@@ -129,6 +164,17 @@ make test          # full pytest suite
 make stage3-test   # Stage 3 Python tests only
 make forge-test    # Foundry contract suite
 ```
+
+Expected, on a clean checkout with no Anvil node running:
+
+```
+300 passed, 5 skipped
+```
+
+The 5 skips are `tests/test_chain.py` — they need a live node. Start one
+(`make anvil`) in another terminal and the same command reports **305 passed**.
+`make forge-test` reports **10 passed**. Neither the Python suite nor the
+contract suite needs the model weights or the network.
 
 > [!NOTE]
 > The Makefile's `PY := .venv/bin/python` is a POSIX path. On Windows the venv lives in `.venv\Scripts\`, so run the `python -m faceproof.run …` / `pytest` commands directly (shown above) rather than `make`.
@@ -169,14 +215,62 @@ Exit codes: `0` accepted · `1` abstain · `2` refused, no consent · `3` usage 
 | `make tamper` | `tamper` | Single-character tamper demonstration |
 | `make abstain` | `abstain` | Show the abstain path (quality-gate rejection → no bundle) |
 | `make forget` | `forget` | Revoke consent and destroy the erasure salt |
-| `make deploy` | — | `forge build` + deploy `EvidenceRegistry` to local Anvil |
+| `make deploy` | `deploy` | `forge build` + deploy `EvidenceRegistry` (`RPC=…` / `ACCOUNT=…` to override) |
 | `make anvil` | — | Start a local Anvil node on `:8545` |
 | `make forge-test` | — | Run the Foundry contract test suite |
 | `make stage3-test` | — | Run only the Stage 3 Python tests |
+| — | `ui --port 8765` | Serve the local dashboard on `127.0.0.1` |
 
 Windows equivalent, e.g.: `.\.venv\Scripts\python.exe -m faceproof.run search --img data\demo\synthetic_face.jpg --subject alice`
 
+> [!IMPORTANT]
+> **`make search` exits `3` on a clean checkout, and that is correct.** No index
+> ships with the repository, so there is no Stage 2 result to consume and Stage 3
+> refuses to invent one. You have two honest ways forward:
+>
+> * **`run search --demo`** — uses the clearly-labelled synthetic Stage 2 fixture
+>   (`source: synthetic-stub`). Exercises the whole attestation path with no
+>   corpus. Nothing about it claims a real search took place.
+> * **Build a corpus first** — `run corpus-local` over consenting photographs,
+>   then `run stage2`, then `run search`. This is a genuine FAISS retrieval. See
+>   [Channel A corpus](#channel-a-corpus--local-consenting-photographs).
+>
+> Raising `accept_at` to turn an abstain into a match is not a third option.
+
+> [!CAUTION]
+> **`make deploy` used to be broken and the fix changed its interface.** It
+> previously passed the key through `ETH_PRIVATE_KEY`, which `forge script` does
+> not read — forge fell back to its default sender and every deploy failed. The
+> target now delegates to `faceproof.run deploy`, which signs via Anvil's
+> `--unlocked` account locally and requires a Foundry keystore off-localhost.
+> **`KEY=` is gone; use `ACCOUNT=`:**
+>
+> ```bash
+> make deploy                                   # local Anvil, no key anywhere
+> cast wallet import deployer --interactive     # once, for a real chain
+> make deploy RPC=https://… ACCOUNT=deployer    # prompts for the passphrase
+> ```
+>
+> `run deploy` also accepts a `--private-key` flag that is **parsed and then
+> ignored**. Do not use it; it is a leftover and passing a key there does nothing.
+
 </details>
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Package 'faceproof' requires a different Python: 3.14.x` | `python3` is newer than 3.12 | Recreate the venv with an explicit 3.11/3.12 interpreter — see [Clone and install](#clone-and-install) |
+| `make: .venv/bin/python: No such file` | venv missing, or built under Windows layout | `python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"` |
+| `forge: command not found` | Foundry not installed or not on `PATH` | `brew install foundry`, or `foundryup`; only chain commands need it |
+| `Foundry artifact not found … Run forge build` | `contracts/out/` is gitignored and not yet generated | `make deploy`, or `forge build --root contracts` |
+| `no Stage 2 result in out/run-… ` (exit 3) | no index, so nothing to consume | Build a corpus, or pass `--demo` — see the note above |
+| Stage 2 prints `ABSTAIN` | genuinely no match above threshold, or no index at all | Real result. Check `run index-stats`; do **not** raise `accept_at` |
+| `contract not deployed` / an unexpected Amoy transaction | `.env` is in force and points at Amoy with a real key | Source `scripts/demo-anvil.sh` (or `.ps1`) **before** any chain command |
+| Chain checks fail right after a redeploy | Anvil restarted, or a new registry was deployed | Re-source the demo script and redeploy; re-anchor, since a fresh registry has no records |
+| Dashboard shows the wrong contract | the UI reads `REGISTRY_ADDRESS` at launch | Restart the server after `make deploy` |
+| `no completed run under out/` (exit 3) | every run directory lacks `probe.json` | Stage 1 never finished — check `manifest.jsonl` in the newest run |
+| Probe rejected `face_too_small` / `low_detection_confidence` | the gate is working | Use a sharper photo where the face is ≥ 90 px and clearly visible |
 
 ---
 
@@ -346,10 +440,24 @@ self-lookup and proves nothing about recognition.
 ## Calibration
 
 > [!CAUTION]
-> **Not yet measured.** `accept_at = 0.55` is the guide's placeholder, not a result. `make config` prints a warning while `data/calibration.json` is absent, so the recording cannot accidentally imply otherwise.
+> **Measured, but on far too small a sample to trust — re-measure before relying on it.**
+> `data/calibration.json` **is committed** and `config.py` reads it, so the value
+> actually in force is **`accept_at = 0.0967`**, not the 0.55 placeholder. Confirm
+> with `make config`, which prints the number and where it came from.
+>
+> It was derived by the rule `impostor_max + 0.03` from **2 subjects / 6 images —
+> 6 genuine and 9 impostor pairs**. Nine impostor pairs cannot establish an
+> impostor maximum, so 0.0967 is a weak lower bound on a safe threshold. For
+> context, published operating points for `buffalo_l` sit around **0.28–0.40**.
+> At 0.0967 almost any face clears the score gate and `min_margin` (0.06) is
+> doing most of the real work.
+>
+> **This is the single highest-value thing to fix.** Collect 5+ consenting
+> subjects with 5–10 photos each and re-run `make calibrate`. Until then treat
+> every accept as provisional and do not cite an accuracy figure.
 
 ```
-data/calib/<subject_id>/*.jpg      # 2+ subjects, 5–10 images each, varied lighting and angle
+data/calib/<subject_id>/*.jpg      # 5+ subjects, 5–10 images each, varied lighting and angle
 ```
 
 ```bash
@@ -540,7 +648,7 @@ pragma solidity 0.8.24;
 | File | Purpose |
 |------|---------|
 | `contracts/src/EvidenceRegistry.sol` | the registry + `library MerkleLite` |
-| `contracts/test/EvidenceRegistry.t.sol` | 9 Foundry tests (no `forge-std` dependency — a minimal `Vm` interface is declared locally) |
+| `contracts/test/EvidenceRegistry.t.sol` | 10 Foundry tests (no `forge-std` dependency — a minimal `Vm` interface is declared locally) |
 | `contracts/script/Deploy.s.sol` | `DeployScript.run()` — deploys the registry inside a broadcast |
 | `contracts/foundry.toml` | `solc_version = "0.8.24"`, `src/test/script/out` layout, `[rpc_endpoints]` for `anvil` and `amoy` |
 
@@ -609,8 +717,8 @@ Selective disclosure means you can reveal **only** group 2 (platform, post URL, 
   ----------------------------------------- ------------------------ ------
   recomputed root                          | 0xbd9643d34189af12…    |  -
   == stored root                           | 0xbd9643d34189af12…    | PASS
-  selective disclosure (regenerated proof) | match_location         | PASS
-  selective disclosure (proofs.json)       | match_location         | PASS
+  selective disclosure (tree rebuilt)      | match_location         | PASS
+  match_location leaf under anchored root  | proofs.json            | PASS
   == on-chain root                         | EvidenceRegistry.get() | PASS
   on-chain verifyField()                   | match_location         | PASS
   ------------------------------------------------------------------------
@@ -702,15 +810,69 @@ records **both** figures — `margin_basis`, `runner_up_subject` and the origina
 ## Demo runbook (local, end to end)
 
 Anvil keeps chain state **in memory**, so the registry must be redeployed after
-every `anvil` restart. `.env` points `CHAIN`/`RPC_URL`/`REGISTRY_ADDRESS` at the
-historical Polygon Amoy deployment, so a chain command run *without* the demo
-environment silently talks to Amoy and fails with a confusing "contract not
-deployed". `scripts/demo-anvil.ps1` shadows those three values for the local run
-and never edits `.env`, so no testnet POL can be spent by accident.
+every `anvil` restart.
 
+> [!CAUTION]
+> **Always source the demo-environment script before any chain command.**
+> A populated `.env` points `CHAIN`/`RPC_URL`/`REGISTRY_ADDRESS` at Polygon Amoy
+> and supplies a **real** `PRIVATE_KEY`. A chain command run without the demo
+> environment therefore talks to Amoy and signs with that key — at best it fails
+> with a confusing "contract not deployed", at worst it spends real testnet POL.
+>
+> The scripts below shadow those values for the local run and **never edit
+> `.env`** (`load_dotenv()` does not override variables already in the
+> environment, so exporting wins). They also clear `SERPAPI_KEY`, so Channel B
+> cannot transmit a cropped face to a third party during a local demo. Each one
+> self-checks the node, the contract code and the anchor count before you start.
+>
+> | Shell | Script | How to run it |
+> |---|---|---|
+> | bash / zsh (macOS, Linux, WSL) | `scripts/demo-anvil.sh` | `. ./scripts/demo-anvil.sh` |
+> | PowerShell (Windows) | `scripts/demo-anvil.ps1` | `. .\scripts\demo-anvil.ps1` |
+>
+> Both must be **sourced**, not executed — note the leading dot and space.
+> Running them as a subprocess sets the variables in a shell that then exits.
+>
 > **PowerShell may refuse to run the script** ("running scripts is disabled on
 > this system"). Either start the shell as `powershell -ExecutionPolicy Bypass`,
 > or allow local scripts once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
+### macOS / Linux / WSL
+
+```bash
+# 0 - local chain, in its own terminal, left running
+anvil
+
+# 1 - deploy the registry (no private key is passed: Anvil signs unlocked)
+make deploy
+
+# 2 - demo environment. Reads the address from Foundry's broadcast record and
+#     self-checks the node, the contract code and the anchor count.
+. ./scripts/demo-anvil.sh
+
+# 3 - build Channel A from consenting photographs, holding out the probe.
+#     Skip this and Stage 2 will honestly ABSTAIN.
+.venv/bin/python -m faceproof.run corpus-local --root data/corpus
+.venv/bin/python -m faceproof.run index-stats
+
+# 4 - consent, then Stage 1, on a photo that is NOT in the gallery
+.venv/bin/python -m faceproof.cli consent grant <subject>
+.venv/bin/python -m faceproof.run probe --img data/probe/target_probe.jpg --subject <subject>
+
+# 5 - Stage 2, then Stage 3 + anchor + verify + tamper.
+#     Omit --run-dir and both act on the newest run automatically.
+.venv/bin/python -m faceproof.run stage2
+.venv/bin/python -m faceproof.run search --anchor
+
+# 6 - dashboard
+.venv/bin/python -m faceproof.run ui --port 8765
+```
+
+All six on-chain and off-chain checks should print `PASS`, and the tamper demo
+should report `DETECTED`. If step 5 says `ABSTAIN`, that is a real result — see
+the note under step 3.
+
+### Windows
 
 ```powershell
 # 0 - local chain, in its own window, left running
@@ -746,8 +908,10 @@ Re-verify or re-tamper any earlier run at any time (these need only the bundle
 and the chain, not the original photographs):
 
 ```powershell
-.\.venv\Scripts\python.exe -m faceproof.run verify --run-dir outun-<id> --chain
-.\.venv\Scripts\python.exe -m faceproof.run tamper --run-dir outun-<id>
+.\.venv\Scripts\python.exe -m faceproof.run verify --run-dir out
+un-<id> --chain
+.\.venv\Scripts\python.exe -m faceproof.run tamper --run-dir out
+un-<id>
 ```
 
 If Stage 2 returns **ABSTAIN**, that is a real result: the top cosine did not
@@ -761,24 +925,76 @@ re-derived.
 
 ---
 
+## The dashboard
+
+A local web view of the same pipeline — configuration, consent records, index
+snapshot, every run and its artifacts, and a verify button that runs the real
+on-chain checks.
+
+```bash
+. ./scripts/demo-anvil.sh                             # inherit the demo chain env
+.venv/bin/python -m faceproof.run ui --port 8765      # then open http://127.0.0.1:8765
+```
+
+Add `--no-browser` to suppress the automatic browser launch.
+
+**It inherits the environment of the shell that launched it.** Start it without
+sourcing the demo script and its chain panel shows whatever `.env` holds — Amoy
+and a real key. Restart the server after a redeploy, too: `REGISTRY_ADDRESS` is
+read at launch, so a server started before `make deploy` keeps pointing at the
+old contract.
+
+Stdlib `http.server` only, no new dependencies. It binds `127.0.0.1`, rejects
+non-loopback `Host` headers, serves artifacts from a fixed filename whitelist
+with the resolved path re-checked under `out/`, and never accepts or returns
+`PRIVATE_KEY` — the anchor step reads it from the process environment exactly as
+the CLI does.
+
+| Endpoint | Method | Purpose |
+|---|:---:|---|
+| `/api/state` | GET | config, calibration, index, chain, consent records, all runs |
+| `/api/run?id=<run-id>` | GET | artifacts present for one run |
+| `/api/artifact?id=<run-id>&name=<file>` | GET | one whitelisted artifact |
+| `/api/pipeline` | POST | run probe → stage2 → bundle (→ anchor); returns a `job_id` |
+| `/api/verify` | POST | re-verify a run (`check_chain`); returns a `job_id` |
+| `/api/job?id=<job-id>` | GET | poll a job started by either POST |
+
+> [!WARNING]
+> `faceproof/ui/` has **no test coverage** (see [Tests](#tests)). It is a view
+> over modules that are themselves well covered, but the view itself is
+> unverified — for anything load-bearing, confirm with the CLI.
+
+---
+
 ## Tests
 
 ### Full suite
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q
+```bash
+make test                                   # macOS / Linux / WSL
+.\.venv\Scripts\python.exe -m pytest -q     # Windows
 ```
 
 ```
-215 passed, 4 skipped, 2 failed
+300 passed, 5 skipped        # no Anvil node running
+305 passed                   # with `make anvil` in another terminal
 ```
 
 | Bucket | Count | Notes |
 |--------|:-----:|-------|
-| Stage 1 · probe | 167 | detection, gate, consent, handoff, manifest, calibrate, CLI, golden vectors |
-| Stage 3 · attestation | 54 | `test_canonical` 8 · `test_merkle` 11 · `test_bundle` 11 · `test_stage2_adapter` 5 · `test_verify` 7 · `test_run` 7 · `test_chain` 5 |
-| Skipped locally | 4 | `test_chain.py` cases that need a running Anvil node |
-| Coverage | **97%** | `chain.py` / `anchor.py` (live-RPC glue) omitted via `.coveragerc`; everything else measured |
+| Total collected | 305 | across 23 test modules; no model weights and no network required |
+| Skipped without a node | 5 | `test_chain.py` — deploys to a live Anvil and checks a Python-built proof via `verifyField()` |
+| Coverage, attestation core | **93%** | `canonical` 100% · `handoff` 100% · `config` 100% · `verify_cli` 100% · `merkle` 98% · `verify` 97% · `bundle` 96% · `consent` 96% · `face` 93% · `anchor` 70% |
+| Coverage, `make cov` as printed | **68%** | the headline number is dragged down by the dashboard — see below |
+
+> [!WARNING]
+> **The `faceproof/ui/` package has no tests at all** — 615 statements at 0%
+> coverage, and `.coveragerc` does not omit it, so `make cov` reports **68%**
+> rather than the 93% the attestation core actually achieves. The dashboard is
+> demo scaffolding over already-tested modules, but it is untested scaffolding:
+> treat its output as a view of the CLI's results, not as independently verified.
+> Either write tests for it or add `faceproof/ui/*` to the `.coveragerc` omit
+> list with that reasoning recorded — do not simply quote 93% as the project number.
 
 > [!NOTE]
 > **Two tests assert POSIX-only file semantics and fail on Windows:**
@@ -803,7 +1019,7 @@ Ran 9 tests for test/EvidenceRegistry.t.sol:EvidenceRegistryTest
 [PASS] testUnknownAnchorReverts()
 [PASS] testAnchoredEventIsEmitted()
 [PASS] testVerifyFieldOnEightLeafTree()
-Suite result: ok. 9 passed; 0 failed; 0 skipped
+Suite result: ok. 10 passed; 0 failed; 0 skipped
 ```
 
 ### Anvil integration (optional)
@@ -841,7 +1057,7 @@ With a local node running (`make anvil` in another terminal), `tests/test_chain.
 │                           abstain / forget / deploy / anvil / demo         [Stage 3]
 ├── contracts/
 │   ├── src/EvidenceRegistry.sol    append-only registry + MerkleLite         [Stage 3]
-│   ├── test/EvidenceRegistry.t.sol 9 Foundry tests                          [Stage 3]
+│   ├── test/EvidenceRegistry.t.sol 10 Foundry tests                         [Stage 3]
 │   ├── script/Deploy.s.sol         deploy script                            [Stage 3]
 │   └── foundry.toml                solc 0.8.24                              [Stage 3]
 ├── vendor/stage2/          Person 2's Stage 2 branch, vendored             [Stage 2]
@@ -862,9 +1078,9 @@ Stage-3-specific constraints (the pipeline's broader limits are in **[LIMITATION
 - **Polygon Amoy anchor is live but singular.** `EvidenceRegistry` is deployed at `0xeE0efb2a3D75f1933f171dE8e8D9Dd14903170d3` and exactly one root (anchor id `0`) has been anchored — a demonstration on the synthetic Stage 2 fixture, not a run over real discovery output. The Amoy code path shares `chain.py` with Anvil; the local Anvil path is still what the integration tests exercise on every commit.
 - **The ABI artifact is generated, not committed.** `contracts/out/` is gitignored, so `chain.py` needs `forge build` (or `make deploy`) to run once before any chain operation. Standard for Foundry projects; the Makefile targets and CI handle it.
 - **Stage 3 consumes the discovery result through a read-only adapter.** When no Stage 2 result file is present in the run directory, `stage2_adapter` falls back to a **clearly labelled synthetic fixture** (`source: "synthetic-stub"`, `channels_used: ["channel_a:synthetic-stub"]`) so the attestation path is demonstrable in isolation. It is unmistakable in the manifest and the bundle provenance when no real discovery took place.
-- **Stage 2 is wired in via `faceproof/stage2_bridge.py`, not a code merge.** Person 2's package is also named `faceproof` with an older, incompatible implementation, so the bridge loads only their dependency-free real functions (`fuse`, `channel_b`, `index.search`) by file path and emits `stage2.json`. This repo ships **no** FAISS corpus/index (it is gitignored — see [`data/index/README.md`](data/index/README.md)), so `stage2` / `search --real-stage2` in a clean clone demonstrates the **genuine abstain** path. Locally the index is built from consenting photographs via `run corpus-local` (see [Channel A corpus](#channel-a-corpus--local-consenting-photographs)), and the **positive-match path is a real search**: a held-out photograph of a consenting subject is matched against a 4-face / 2-subject index, accepted on a measured threshold, and anchored. The labelled synthetic fixture (`--demo`) remains available for exercising Stage 3 in a clean clone that has no corpus, and is never reached unless that flag is passed. See [`application.md`](application.md).
+- **Stage 2 is wired in via `faceproof/stage2_bridge.py`, not a code merge.** Person 2's package is also named `faceproof` with an older, incompatible implementation, so the bridge loads only their dependency-free real functions (`fuse`, `channel_b`, `index.search`) by file path and emits `stage2.json`. This repo ships **no** FAISS corpus/index (it is gitignored — see [`data/index/README.md`](data/index/README.md)), so `stage2` / `search --real-stage2` in a clean clone demonstrates the **genuine abstain** path. Locally the index is built from consenting photographs via `run corpus-local` (see [Channel A corpus](#channel-a-corpus--local-consenting-photographs)), and the **positive-match path is a real search**: a held-out photograph of a consenting subject is matched against a locally-built index, accepted on the measured threshold, and anchored. The corpus is whatever you build with `run corpus-local`; nothing is committed, so the size and composition of your index are yours and the numbers above will differ. The labelled synthetic fixture (`--demo`) remains available for exercising Stage 3 in a clean clone that has no corpus, and is never reached unless that flag is passed. See [`application.md`](application.md).
 - **Calibration has been measured, on a small sample.** `data/calibration.json` was produced by `faceproof/calibrate.py` from real consenting photos in `data/calib/<subject_id>/` (the photos are gitignored), and `accept_at = 0.0967` is the value now in force — `config.py` reads the file, so the number cited on camera is the number the gate uses. It rests on **2 subjects / 6 images / 9 impostor pairs**, so the impostor maximum it is derived from is a weak upper bound; treat the threshold as provisional and re-measure with more subjects before drawing any conclusion about accuracy.
-- **A live face probe needs model deps not in the test `.venv`.** `insightface` + `onnxruntime` + a one-time ~330 MB `buffalo_l` download are required (on Windows use `insightface==1.0.1`, which ships a pure-Python wheel; `0.7.3` is sdist-only and needs MSVC C++ build tools) for Stage 1 detection, calibration and the Channel A index build. This checkout's `.venv` **does** have them (insightface 1.0.1, onnxruntime 1.29.0, faiss 1.15.0, buffalo_l cached), so the runs recorded here are real, not mocked. `pip install -e ".[dev]"` installs the tested set.
+- **A live face probe needs the model stack and a one-time download.** `insightface` + `onnxruntime` + a ~330 MB `buffalo_l` fetch (`make setup`) are required for Stage 1 detection, calibration and the Channel A index build. `pyproject.toml` pins **`insightface==0.7.3`**, which is sdist-only and builds from source — fine on macOS/Linux, but on Windows it needs [MSVC C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/). `pip install -e ".[dev]"` installs the tested set. The attestation core and the full Python suite need none of it.
 - **Anvil deployment addresses are deterministic and disposable.** Any address or transaction hash shown for a local run comes from a throwaway chain and regenerates on every run.
 - **One test asserts POSIX-only file semantics** and fails on Windows: `tests/test_consent.py::TestStore::test_file_permissions_are_owner_only` expects mode `600` after `chmod`, and Windows reports `666`. The consent store is still written 0600-then-replace; only the assertion is unportable. It passes on the Linux CI.
 

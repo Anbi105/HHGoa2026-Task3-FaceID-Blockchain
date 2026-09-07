@@ -104,18 +104,23 @@ forget: ## Stage 3: revoke consent and destroy the erasure salt
 anvil: ## Stage 3: start a local Anvil node on :8545
 	anvil
 
-# The key reaches forge through ETH_PRIVATE_KEY, never argv: a --private-key
-# on the command line is readable by every local process via `ps` and lands in
-# shell history.  ANVIL_KEY is the world-known Anvil dev account 0.
-# Real chain:  make deploy RPC=https://... KEY=$$PRIVATE_KEY
-ANVIL_KEY ?= 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-RPC       ?= http://127.0.0.1:8545
-KEY       ?= $(ANVIL_KEY)
+# Deployment is delegated to `faceproof.run deploy`, which is the only place
+# that knows how to sign without putting a key in argv (readable by every local
+# process via `ps`, and it lands in shell history).  Against a local node it
+# uses `--unlocked --sender`, so Anvil signs for its own dev account and no key
+# exists anywhere in the command; off-localhost it requires a Foundry keystore.
+#
+# This target previously passed the key through ETH_PRIVATE_KEY, which
+# `forge script` does not read — forge fell back to its default sender and
+# every deploy failed.  Do not reintroduce that.
+#
+# Real chain:  make deploy RPC=https://... ACCOUNT=deployer
+#              (import once with: cast wallet import deployer --interactive)
+RPC     ?= http://127.0.0.1:8545
+ACCOUNT ?=
 
-deploy: ## Stage 3: build + deploy EvidenceRegistry (RPC=… KEY=… to override)
-	forge build --root contracts
-	ETH_PRIVATE_KEY=$(KEY) forge script contracts/script/Deploy.s.sol:DeployScript \
-	  --root contracts --rpc-url $(RPC) --broadcast
+deploy: ## Stage 3: build + deploy EvidenceRegistry (RPC=… ACCOUNT=… to override)
+	$(PY) -m faceproof.run deploy --rpc $(RPC) $(if $(ACCOUNT),--account $(ACCOUNT),)
 
 forge-test: ## Stage 3: run the Foundry contract test suite
 	forge test --root contracts -vv
